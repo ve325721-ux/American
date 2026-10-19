@@ -117,17 +117,39 @@
 .admin-grid {display:grid;grid-template-columns:1.1fr .9fr;gap:18px}
 .admin-table {width:100%;border-collapse:collapse;font-size:12px}.admin-table th,.admin-table td{text-align:left;padding:12px;border-bottom:1px solid #ddd3c2}.admin-table th{font:600 9px 'IBM Plex Mono',monospace;text-transform:uppercase;color:#777}
 .admin-field {display:grid;gap:6px;margin:11px 0}.admin-field label{font:600 10px 'IBM Plex Mono',monospace;text-transform:uppercase;color:#6c716e}.admin-field input,.admin-field textarea{border:1px solid #cfc4b1;border-radius:5px;background:#fffaf0;padding:10px;color:#182330}
+.world-wrap {overflow:hidden}
+.world-stage {position:absolute;inset:0;overflow:hidden;background:#b8d1ce}
+.world-switch,.admin-link {display:inline-flex;align-items:center;justify-content:center;white-space:nowrap;text-decoration:none}
+.world-switch {min-height:36px;padding:0 10px;border:1px solid #e1c467;border-radius:5px;background:#f1c751;color:#182330;cursor:pointer;font:700 9px 'IBM Plex Mono',monospace;letter-spacing:.04em}
+.admin-link {color:#f1c751;font:600 9px 'IBM Plex Mono',monospace}
+.world-map-shortcut {position:absolute;z-index:30;right:13px;top:72px;display:flex;align-items:center;gap:8px;min-height:36px;padding:0 11px;border:1px solid #fff8;border-radius:5px;background:#182330e8;color:#f5f0e4;cursor:pointer;font:600 9px 'IBM Plex Mono',monospace;letter-spacing:.05em}
+.world-inspection {position:absolute;z-index:42;left:50%;top:72px;transform:translateX(-50%);display:grid;gap:5px;width:min(320px,calc(100% - 36px));padding:13px 36px 13px 14px;border-left:3px solid #f1c751;border-radius:6px;background:#182330ed;color:#f5f0e4;box-shadow:0 5px 20px #18233055}
+.world-inspection strong {font:700 18px 'Barlow Condensed',sans-serif;text-transform:uppercase}
+.world-inspection span {font-size:10px;line-height:1.45;color:#c5b995}
+.world-inspection button {position:absolute;right:8px;top:8px;display:grid;place-items:center;width:28px;height:28px;border:0;background:transparent;color:#f5f0e4;cursor:pointer}
+.world-panel-scrim {position:absolute;z-index:60;inset:0;display:grid;place-items:center;padding:16px;background:#10182099;backdrop-filter:blur(3px)}
+.world-shop-panel {width:min(470px,100%);max-height:calc(100% - 28px);overflow:auto;padding:20px;border:1px solid #ddd1b9;border-radius:10px;background:#f5f0e4;color:#182330;box-shadow:0 16px 60px #10182066}
+.world-shop-panel h2 {margin:4px 0 0;font-size:30px;line-height:1}
+.world-panel-close {display:grid;place-items:center;width:38px;height:38px;border:1px solid #c6bba7;border-radius:6px;background:transparent;color:#182330;cursor:pointer}
+.world-panel-copy {margin:11px 0 15px;color:#626c6a;font-size:12px;line-height:1.5}
+.world-shop-item {display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 0;border-top:1px solid #d9cebc}
+.world-shop-item strong,.world-shop-item span {display:block}
+.world-shop-item strong {font:700 18px 'Barlow Condensed',sans-serif;text-transform:uppercase}
+.world-shop-item span {margin-top:3px;color:#6e7672;font-size:10px;line-height:1.4}
+.world-shop-item .game-btn {flex:none}
+.dealership-cars-link {color:#182330!important;border-color:#b9ad9a!important}
 .skeleton-line {height:9px;border-radius:6px;background:linear-gradient(90deg,#ddd3c2,#eee8dc,#ddd3c2);background-size:200% 100%;animation:skeleton-shift 1.5s ease-in-out infinite}
 @keyframes skeleton-shift {from{background-position:100% 0}to{background-position:-100% 0}}
 .auth-shell {min-height:100dvh;display:grid;place-items:center;background:#182330;color:#f5f0e4;padding:24px}
 @media(max-width:900px){.game-layout{grid-template-columns:minmax(0,1fr) 320px}.topbar{padding:0 14px}.top-stats .stat-pill:nth-child(2){display:none}}
 @media(max-width:700px){
- .topbar{height:58px;padding:0 12px}.brand{font-size:21px}.stat-pill{padding:7px 9px;font-size:10px}.top-stats .stat-pill:nth-child(3){display:none}.game-layout{height:calc(100dvh - 58px);min-height:0;display:block}
+ .topbar{height:58px;padding:0 9px;gap:4px}.brand{font-size:18px;min-width:0}.brand small{font-size:7px;letter-spacing:.12em}.top-stats{gap:5px}.stat-pill{padding:6px 7px;font-size:9px}.world-switch{min-height:33px;padding:0 7px;font-size:8px}.admin-link{font-size:8px}.top-stats .stat-pill:nth-child(3){display:none}.game-layout{height:calc(100dvh - 58px);min-height:0;display:block}
  .map-wrap{height:57%;position:absolute;inset:0 0 auto}.side-panel{position:absolute;inset:55% 0 0;border:0;border-top:3px solid #c94d2f;border-radius:14px 14px 0 0;z-index:450;box-shadow:0 -8px 24px #18233020}
  .panel-head{padding:12px 16px 8px}.panel-title{font-size:23px}.district-line{margin-top:4px}.needs{padding:9px 16px;gap:7px}
  .phone-tabs{padding:5px 5px 0}.phone-tab{min-height:47px;font-size:8px}.phone-content{margin:0 5px 5px;padding:11px;min-height:0}
  .map-label{left:10px;top:10px;padding:8px 10px}.map-label b{font-size:14px}.map-label span{font-size:8px}
  .map-tools{right:9px;top:10px}.map-tool{width:37px;height:37px}
+  .world-map-shortcut{right:9px;top:57px;min-height:32px;font-size:8px}.world-inspection{top:54px}.world-panel-scrim{padding:8px}.world-shop-panel{padding:15px}.world-shop-item{gap:8px}.world-shop-item .game-btn{padding:0 9px;font-size:9px}
  .welcome-screen{grid-template-columns:1fr;min-height:100dvh}.welcome-art{position:absolute;inset:0;min-height:100%;opacity:.62;background-position:38% center}.welcome-copy{padding:38px 24px;justify-content:flex-end;min-height:100dvh}.welcome-copy h1{font-size:clamp(56px,17vw,88px);margin-top:12px}.welcome-copy p{font-size:13px;margin:0}.setup-box{margin-top:16px}.welcome-foot{margin-bottom:10px}
  .admin-page{padding:20px 14px}.admin-header{align-items:flex-start;gap:14px;flex-direction:column}.admin-header h1{font-size:38px}.admin-grid{grid-template-columns:1fr}.admin-card{padding:15px;overflow-x:auto}.admin-table{min-width:540px}
 }

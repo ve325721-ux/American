@@ -10,6 +10,8 @@ import { useGameState } from './game/useGameState';
 import * as gameExports from './game/useGameState';
 import { loadBillboards, saveBillboards, recordBillboardView, recordBillboardClick } from './game/billboardStore';
 import type { Billboard } from './game/billboardStore';
+import { CityWorld } from './game/three/CityWorld';
+import type { WorldInteraction, WorldLocation } from './game/three/worldTypes';
 
 type Direction = 'north' | 'south' | 'east' | 'west';
 type Tab = 'Map' | 'Jobs' | 'Bank' | 'Cars' | 'Home' | 'Shop';
@@ -103,8 +105,13 @@ function Setup({ createPlayer, error }: { createPlayer: (username: string, chara
 }
 
 function GameScreen() {
-  const { game, createPlayer, move, work, bank, buyCar, buyFurniture, buySupply, useSupply, rentApartment, rest, wash, saveError } = useGameState();
+  const { game, createPlayer, move, work, bank, buyCar, buyFurniture, placeFurniture, buySupply, useSupply, rentApartment, rest, wash, updateWorldPose, setWorldLocation, saveError } = useGameState();
   const [tab, setTab] = useState<Tab>('Map');
+  const [worldView, setWorldView] = useState<'world' | 'map'>('world');
+  const [worldPanel, setWorldPanel] = useState<'furniture' | 'dealership' | null>(null);
+  const [pendingFurnitureId, setPendingFurnitureId] = useState<string | null>(null);
+  const [inspectedFurniture, setInspectedFurniture] = useState<string | null>(null);
+  const [driving, setDriving] = useState(false);
   const [bankAmount, setBankAmount] = useState('50');
   const [ads, setAds] = useState<Billboard[]>([]);
   const [adLoading, setAdLoading] = useState(true);
@@ -129,13 +136,17 @@ function GameScreen() {
   useEffect(() => {
     const keyHandler = (e: KeyboardEvent) => {
       if (/INPUT|TEXTAREA|SELECT/.test((e.target as HTMLElement)?.tagName ?? '')) return;
+      if (worldView === 'world') {
+        if (e.key.toLowerCase() === 'm') setWorldView('map');
+        return;
+      }
       const controls: Record<string, Direction> = { ArrowUp: 'north', w: 'north', W: 'north', ArrowDown: 'south', s: 'south', S: 'south', ArrowLeft: 'west', a: 'west', A: 'west', ArrowRight: 'east', d: 'east', D: 'east' };
       const direction = controls[e.key];
       if (direction && game) { e.preventDefault(); move(direction); }
       if (e.key.toLowerCase() === 'm') setTab('Map');
     };
     window.addEventListener('keydown', keyHandler); return () => window.removeEventListener('keydown', keyHandler);
-  }, [game, move]);
+  }, [game, move, worldView]);
   if (!game) return <Setup createPlayer={createPlayer} error={saveError} />;
 
   const playerPos: [number, number] = [Number(game.position.lat), Number(game.position.lng)];
@@ -143,6 +154,64 @@ function GameScreen() {
   // Recenter itself only animates when its target changes.
   const nearest = stops.reduce((a, b) => Math.abs(a.position[0] - playerPos[0]) + Math.abs(a.position[1] - playerPos[1]) < Math.abs(b.position[0] - playerPos[0]) + Math.abs(b.position[1] - playerPos[1]) ? a : b);
   const call = (action: () => void, message: string) => { action(); announce(message); };
+  const handleWorldInteract = (target: WorldInteraction) => {
+    if (target === 'apartment') {
+      setWorldLocation('apartment');
+      setWorldPanel(null);
+      setPendingFurnitureId(null);
+      announce('Welcome home. Walk around and inspect your furniture.');
+    } else if (target === 'apartment-exit') {
+      setWorldLocation('street');
+      setPendingFurnitureId(null);
+      announce('Back on the block.');
+    } else if (target === 'furniture-shop') {
+      setWorldPanel('furniture');
+      setDriving(false);
+    } else if (target === 'dealership') {
+      setWorldPanel('dealership');
+    } else if (target === 'test-car') {
+      setDriving((current) => !current);
+      announce(driving ? 'You parked the test car.' : 'Test drive started. Use the controls to drive.');
+    }
+  };
+  const handleWorldLocation = (location: WorldLocation) => {
+    setWorldLocation(location);
+    setWorldPanel(null);
+    setPendingFurnitureId(null);
+    setDriving(false);
+  };
+  const handlePlaceFurniture = (itemId: string, x: number, z: number, rotation: number) => {
+    if (!game.furniture.includes(itemId)) {
+      announce('Buy this item at the furniture shop before placing it.');
+      return;
+    }
+    placeFurniture(itemId, x, z, rotation);
+    setPendingFurnitureId(null);
+    announce('Furniture placed. Tap it again to move it.');
+  };
+  const buyAtFurnitureShop = (itemId: string, item: AnyRecord) => {
+    if (game.furniture.includes(itemId)) return;
+    if (game.cash < itemPrice(item)) return;
+    buyFurniture(itemId);
+    setWorldPanel(null);
+    announce(`${itemName(item)} bought. Take it home and place it from the Home tab.`);
+  };
+  const beginFurniturePlacement = (itemId: string, name: string) => {
+    if (!game.furniture.includes(itemId)) {
+      setWorldView('world');
+      announce(`Visit the furniture shop to buy ${name} first.`);
+      return;
+    }
+    if (game.worldLocation !== 'apartment') {
+      setWorldView('world');
+      announce('Enter your apartment first, then choose a place for this item.');
+      return;
+    }
+    setWorldView('world');
+    setPendingFurnitureId(itemId);
+    setTab('Map');
+    announce(`Tap an open floor space to place ${name}. Tap the item again to move it.`);
+  };
   const status = [
     ['Hunger', game.hunger, 'Food'],
     ['Energy', game.energy, 'Energy'],
@@ -157,7 +226,7 @@ function GameScreen() {
     {tab === 'Jobs' && <><div className="content-kicker">WORK A SHIFT. EARN YOUR NEXT STEP.</div>{jobs.length ? jobs.map((job, i) => <div className="action-card" key={itemId(job, i)}><div className="row-between"><h3>{itemName(job)}</h3><span className="price">+{cash(itemPrice(job))}</span></div><p>{itemDescription(job)}</p><button className="game-btn" onClick={() => call(() => work(itemId(job, i)), `Shift complete. ${cash(itemPrice(job))} earned.`)} data-testid={`work-${itemId(job, i)}`}>Work this shift</button></div>) : <div className="action-card"><h3>FIND YOUR FIRST SHIFT</h3><p>Check back after exploring. The city always needs another pair of hands.</p></div>}</>}
     {tab === 'Bank' && <><div className="content-kicker">YOUR MONEY, YOUR CALL.</div><div className="action-card"><div className="row-between"><h3>AVAILABLE CASH</h3><span className="price">{cash(game.cash)}</span></div><p>Keep cash for the street. Put a little away for later.</p><div className="form-row"><input className="input-dark" value={bankAmount} type="number" min="1" onChange={(e) => setBankAmount(e.target.value)} aria-label="Amount" data-testid="input-bank-amount" /></div><div className="row-between" style={{ marginTop: 9 }}><button className="game-btn secondary" onClick={() => call(() => bank('deposit', Number(bankAmount)), `Deposited ${cash(Number(bankAmount))}.`)} data-testid="bank-deposit">Deposit</button><button className="game-btn ghost" onClick={() => call(() => bank('withdraw', Number(bankAmount)), `Withdrew ${cash(Number(bankAmount))}.`)} data-testid="bank-withdraw">Withdraw</button></div></div><div className="action-card"><div className="row-between"><h3>SAVINGS</h3><span className="price">{cash(game.bank)}</span></div><p>Deposits stay in your account. No city shortcut, just steady choices.</p></div><div className="content-kicker">RECENT MONEY MOVES</div>{game.transactions.slice(0, 12).map((transaction: AnyRecord, i: number) => <div key={`${i}-${transaction.amount}`} className="row-between" style={{ borderBottom: '1px solid #34414b', padding: '9px 1px', fontSize: 11 }}><span>{transaction.description ?? transaction.label ?? transaction.type ?? 'Transaction'}</span><span className="price">{transaction.amount >= 0 ? '+' : ''}{cash(Math.abs(Number(transaction.amount)))}</span></div>)}</>}
     {tab === 'Cars' && <><div className="content-kicker">THE CITY MOVES FAST. SO CAN YOU.</div><div className="action-card"><div className="row-between"><h3>YOUR GARAGE</h3><CarFront size={18} color="#f1c751" /></div><p>{game.vehicles.length ? `${game.vehicles.length} ride${game.vehicles.length > 1 ? 's' : ''} in your name.` : 'No wheels yet. Every borough is still in reach.'}</p>{game.vehicles.map((id: string) => <div key={id} className="price">{itemName(cars.find((car) => itemId(car, 0) === id) ?? { id })}</div>)}</div>{cars.map((car, i) => { const owned = game.vehicles.includes(itemId(car, i)); return <div className="action-card" key={itemId(car, i)}><div className="row-between"><h3>{itemName(car)}</h3><span className="price">{cash(itemPrice(car))}</span></div><p>{itemDescription(car)}</p><button className="game-btn" disabled={owned || game.cash < itemPrice(car)} onClick={() => call(() => buyCar(itemId(car, i)), `Bought ${itemName(car)}.`)} data-testid={`buy-car-${itemId(car, i)}`}>{owned ? 'In your garage' : 'Buy ride'}</button></div>; })}</>}
-    {tab === 'Home' && <><div className="content-kicker">SOMEWHERE TO LAND BETWEEN EVERYTHING ELSE.</div><div className="action-card"><div className="row-between"><h3>YOUR PLACE</h3><Home size={17} color="#f1c751" /></div><p>{game.apartmentId ? `${itemName(apartments.find((place) => itemId(place, 0) === game.apartmentId) ?? { id: game.apartmentId })} is home.` : 'No lease yet. A place of your own changes the whole rhythm.'}</p><button className="game-btn secondary" onClick={() => call(rest, 'You took a moment to rest.')} data-testid="button-rest"><BedDouble size={13} style={{ verticalAlign: 'middle', marginRight: 6 }} />Rest</button><button className="game-btn ghost" style={{ marginLeft: 7 }} onClick={() => call(wash, 'You cleaned up. Fresh start.')} data-testid="button-wash"><WashingMachine size={13} style={{ verticalAlign: 'middle', marginRight: 6 }} />Wash up</button></div>{apartments.map((place, i) => { const current = itemId(place, i) === game.apartmentId; return <div className="action-card" key={itemId(place, i)}><div className="row-between"><h3>{itemName(place)}</h3><span className="price">{cash(itemPrice(place))}</span></div><p>{itemDescription(place)}</p><button className="game-btn" disabled={current || game.cash < itemPrice(place)} onClick={() => call(() => rentApartment(itemId(place, i)), 'You found a place to call home.')} data-testid={`rent-${itemId(place, i)}`}>{current ? 'Your current home' : 'Rent this place'}</button></div>; })}<div className="content-kicker" style={{ marginTop: 15 }}>MAKE IT FEEL LIKE YOURS</div>{furniture.map((item, i) => { const owned = game.furniture.includes(itemId(item, i)); return <div className="action-card" key={itemId(item, i)}><div className="row-between"><h3>{itemName(item)}</h3><span className="price">{cash(itemPrice(item))}</span></div><p>{itemDescription(item)}</p><button className="game-btn ghost" disabled={owned || game.cash < itemPrice(item)} onClick={() => call(() => buyFurniture(itemId(item, i)), `Added ${itemName(item)} to your place.`)} data-testid={`buy-furniture-${itemId(item, i)}`}>{owned ? 'Already at home' : 'Bring it home'}</button></div>; })}</>}
+    {tab === 'Home' && <><div className="content-kicker">SOMEWHERE TO LAND BETWEEN EVERYTHING ELSE.</div><div className="action-card"><div className="row-between"><h3>YOUR PLACE</h3><Home size={17} color="#f1c751" /></div><p>{game.apartmentId ? `${itemName(apartments.find((place) => itemId(place, 0) === game.apartmentId) ?? { id: game.apartmentId })} is home.` : 'No lease yet. A place of your own changes the whole rhythm.'}</p><button className="game-btn secondary" onClick={() => call(rest, 'You took a moment to rest.')} data-testid="button-rest"><BedDouble size={13} style={{ verticalAlign: 'middle', marginRight: 6 }} />Rest</button><button className="game-btn ghost" style={{ marginLeft: 7 }} onClick={() => call(wash, 'You cleaned up. Fresh start.')} data-testid="button-wash"><WashingMachine size={13} style={{ verticalAlign: 'middle', marginRight: 6 }} />Wash up</button></div>{apartments.map((place, i) => { const current = itemId(place, i) === game.apartmentId; return <div className="action-card" key={itemId(place, i)}><div className="row-between"><h3>{itemName(place)}</h3><span className="price">{cash(itemPrice(place))}</span></div><p>{itemDescription(place)}</p><button className="game-btn" disabled={current || game.cash < itemPrice(place)} onClick={() => call(() => rentApartment(itemId(place, i)), 'You found a place to call home.')} data-testid={`rent-${itemId(place, i)}`}>{current ? 'Your current home' : 'Rent this place'}</button></div>; })}<div className="content-kicker" style={{ marginTop: 15 }}>MAKE IT FEEL LIKE YOURS</div>{furniture.map((item, i) => { const id = itemId(item, i); const owned = game.furniture.includes(id); const placed = game.placedFurniture.some((placement) => placement.itemId === id); return <div className="action-card" key={id}><div className="row-between"><h3>{itemName(item)}</h3><span className="price">{cash(itemPrice(item))}</span></div><p>{itemDescription(item)}</p><button className="game-btn ghost" disabled={owned || game.cash < itemPrice(item)} onClick={() => call(() => buyFurniture(id), `Added ${itemName(item)} to your place.`)} data-testid={`buy-furniture-${id}`}>{owned ? 'Already at home' : 'Bring it home'}</button><button className="game-btn secondary" style={{ marginTop: 8, width: '100%' }} disabled={!owned} onClick={() => beginFurniturePlacement(id, itemName(item))} data-testid={`place-furniture-${id}`}>{!owned ? 'Buy this item first' : !placed ? 'Place in apartment' : 'Move in apartment'}</button></div>; })}</>}
     {tab === 'Shop' && <><div className="content-kicker">SMALL THINGS KEEP YOU GOING.</div>{supplies.map((supply, i) => <div className="action-card" key={itemId(supply, i)}><div className="row-between"><h3>{itemName(supply)}</h3><span className="price">{cash(itemPrice(supply))}</span></div><p>{itemDescription(supply)}</p><div className="row-between"><span className="price">In bag: {game.inventory[itemId(supply, i)] ?? 0}</span><button className="game-btn" disabled={game.cash < itemPrice(supply)} onClick={() => call(() => buySupply(itemId(supply, i)), `${itemName(supply)} added to your bag.`)} data-testid={`buy-supply-${itemId(supply, i)}`}>Buy</button></div>{(game.inventory[itemId(supply, i)] ?? 0) > 0 && <button className="game-btn secondary" style={{ marginTop: 8 }} onClick={() => call(() => useSupply(itemId(supply, i)), `Used ${itemName(supply)}.`)} data-testid={`use-supply-${itemId(supply, i)}`}>Use one</button>}</div>)}</>}
   </div>;
 
@@ -168,22 +237,44 @@ function GameScreen() {
     return { raw, point: point ?? fallbackStop.position, id: String(raw.id ?? adName(raw)) };
   });
   return <main className="game-shell">
-    <header className="topbar"><div className="brand">AMERICAN DREAM<small>NEW YORK CITY · YOUR LIFE, YOUR MOVE</small></div><div className="top-stats"><div className="stat-pill"><Wallet size={15} color="#f1c751" /><strong>{cash(game.cash)}</strong></div><div className="stat-pill"><Banknote size={14} />BANK <strong>{cash(game.bank)}</strong></div><div className="stat-pill">{game.username}</div><Link to="/admin" style={{ color: '#f1c751', fontFamily: 'IBM Plex Mono', fontSize: 9, textDecoration: 'none' }} data-testid="link-admin">AD MANAGER</Link></div></header>
+    <header className="topbar"><div className="brand">AMERICAN DREAM<small>NEW YORK CITY · YOUR LIFE, YOUR MOVE</small></div><div className="top-stats"><div className="stat-pill"><Wallet size={15} color="#f1c751" /><strong>{cash(game.cash)}</strong></div><div className="stat-pill"><Banknote size={14} />BANK <strong>{cash(game.bank)}</strong></div><div className="stat-pill">{game.username}</div><button className="world-switch" onClick={() => { setWorldView((current) => current === 'world' ? 'map' : 'world'); setWorldPanel(null); setPendingFurnitureId(null); }} data-testid="button-switch-world-map">{worldView === 'world' ? 'NYC MAP' : '3D WORLD'}</button><Link to="/admin" className="admin-link" data-testid="link-admin">AD MANAGER</Link></div></header>
     <div className="game-layout">
-      <div className="map-wrap">
-        <MapContainer center={playerPos} zoom={12} minZoom={10} maxZoom={18} scrollWheelZoom zoomControl={false} attributionControl>
-          <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />
-          <MapReady onReady={setMapInstance} />
-          <Recenter position={mapFocus} />
-          {stops.map((stop, i) => <Marker key={stop.name} position={stop.position} icon={destinationIcon(stop.color, i + 1)} eventHandlers={{ click: () => { setSelectedStop(stop); setMapFocus(stop.position); } }}><Popup><b>{stop.name}</b><br />{stop.area}<br /><button className="game-btn" style={{ marginTop: 8, minHeight: 30 }} onClick={() => setTab('Jobs')}>See what's here</button></Popup></Marker>)}
-          <Marker position={playerPos} icon={playerIcon(game.username)}><Popup><b>{game.username}</b><br />Right here, right now.</Popup></Marker>
-          {renderedAds.map(({ raw, point, id }) => <BillboardMarker key={id} billboard={raw} position={point} icon={adIcon} onClickLink={(adId) => setAds(recordBillboardClick(adId))} onView={(adId) => setAds(recordBillboardView(adId))} />)}
-        </MapContainer>
-        <div className="map-label"><b>{selectedStop.name}</b><span>{selectedStop.area}</span></div>
-        <div className="map-tools"><button className="map-tool" title="Show my position" onClick={() => { setMapFocus(playerPos); setSelectedStop(nearest); }} data-testid="map-my-location"><MapPin size={17} /></button><button className="map-tool" title="Zoom in" onClick={() => mapInstance?.zoomIn()} data-testid="map-zoom-in"><Plus size={17} /></button><button className="map-tool" title="Map help" onClick={() => setHelpOpen(!helpOpen)} data-testid="map-help"><CircleHelp size={17} /></button></div>
-        {helpOpen && <div style={{ position: 'absolute', zIndex: 600, right: 65, top: 65, width: 210, background: '#182330', color: '#f5f0e4', padding: 14, borderRadius: 8, fontSize: 11, lineHeight: 1.5 }}>Explore with WASD or arrow keys. Use the city phone for jobs, money, a place, and supplies.<button onClick={() => setHelpOpen(false)} aria-label="Close help" style={{ float: 'right', border: 0, background: 'transparent', color: '#f5f0e4' }}><X size={14} /></button></div>}
-        {adLoading && <div style={{ position: 'absolute', bottom: 14, left: 15, zIndex: 400, background: '#f5f0e4', padding: '7px 10px', borderRadius: 5, font: '10px IBM Plex Mono' }}>Loading neighborhood ads…</div>}
-        {!adLoading && adError && <button onClick={() => void loadAds()} style={{ position: 'absolute', bottom: 14, left: 15, zIndex: 400, background: '#182330', color: 'white', padding: '8px 10px', border: 0, borderRadius: 5, font: '10px IBM Plex Mono' }}>{adError} Retry</button>}
+      <div className={`map-wrap ${worldView === 'world' ? 'world-wrap' : ''}`}>
+        {worldView === 'world' ? <div className="world-stage">
+          <CityWorld
+            location={game.worldLocation}
+            initialPose={game.worldPose}
+            character={game.character}
+            placements={game.placedFurniture}
+            pendingFurnitureId={pendingFurnitureId}
+            driving={driving}
+            paused={Boolean(worldPanel)}
+            onPoseChange={updateWorldPose}
+            onLocationChange={handleWorldLocation}
+            onInteract={handleWorldInteract}
+            onToggleDrive={() => setDriving((current) => !current)}
+            onPlaceFurniture={handlePlaceFurniture}
+            onInspectFurniture={setInspectedFurniture}
+          />
+          <button className="world-map-shortcut" onClick={() => setWorldView('map')} data-testid="button-open-nyc-map"><MapIcon size={16} />NYC NAVIGATION MAP</button>
+          {inspectedFurniture && <div className="world-inspection" role="status" data-testid="status-inspected-furniture"><button aria-label="Close furniture details" onClick={() => setInspectedFurniture(null)}><X size={14} /></button><strong>{itemName(furniture.find((item, index) => itemId(item, index) === inspectedFurniture) ?? { name: inspectedFurniture.replaceAll('-', ' ') })}</strong><span>{itemDescription(furniture.find((item, index) => itemId(item, index) === inspectedFurniture) ?? { description: 'A closer look at your apartment furniture.' })}</span></div>}
+          {worldPanel === 'furniture' && <div className="world-panel-scrim"><section className="world-shop-panel" aria-label="Furniture shop" data-testid="panel-furniture-shop"><div className="row-between"><div><div className="eyebrow">YOUR NEXT PLACE</div><h2 className="display">FURNITURE SHOP</h2></div><button className="world-panel-close" aria-label="Close furniture shop" onClick={() => setWorldPanel(null)}><X size={18} /></button></div><p className="world-panel-copy">Pick a piece for your apartment. You can place it from Home after you bring it back.</p>{furniture.map((item, index) => { const id = itemId(item, index); const owned = game.furniture.includes(id); return <div className="world-shop-item" key={id}><div><strong>{itemName(item)}</strong><span>{itemDescription(item)}</span></div><button className="game-btn" disabled={owned || game.cash < itemPrice(item)} onClick={() => buyAtFurnitureShop(id, item)} data-testid={`shop-buy-furniture-${id}`}>{owned ? 'OWNED' : `BUY ${cash(itemPrice(item))}`}</button></div>; })}</section></div>}
+          {worldPanel === 'dealership' && <div className="world-panel-scrim"><section className="world-shop-panel" aria-label="Vehicle dealership" data-testid="panel-vehicle-dealership"><div className="row-between"><div><div className="eyebrow">MOTOR ROW · NEW YORK</div><h2 className="display">TAKE A TEST DRIVE</h2></div><button className="world-panel-close" aria-label="Close dealership" onClick={() => setWorldPanel(null)}><X size={18} /></button></div><p className="world-panel-copy">Take the red city car for a spin. Drive with WASD or the touch joystick; press E or Interact to park.</p><div className="action-card"><div className="row-between"><h3>CITY TEST CAR</h3><span className="price">NO CHARGE</span></div><p>A loaner for your first run around the block.</p><button className="game-btn" onClick={() => { setDriving(true); setWorldPanel(null); announce('Test drive started. Have a look around the neighborhood.'); }} data-testid="button-start-test-drive"><CarFront size={14} style={{ verticalAlign: 'middle', marginRight: 6 }} />Start test drive</button></div><button className="game-btn ghost dealership-cars-link" onClick={() => { setWorldPanel(null); setTab('Cars'); }}>View cars for sale</button></section></div>}
+        </div> : <>
+          <MapContainer center={playerPos} zoom={12} minZoom={10} maxZoom={18} scrollWheelZoom zoomControl={false} attributionControl>
+            <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />
+            <MapReady onReady={setMapInstance} />
+            <Recenter position={mapFocus} />
+            {stops.map((stop, i) => <Marker key={stop.name} position={stop.position} icon={destinationIcon(stop.color, i + 1)} eventHandlers={{ click: () => { setSelectedStop(stop); setMapFocus(stop.position); } }}><Popup><b>{stop.name}</b><br />{stop.area}<br /><button className="game-btn" style={{ marginTop: 8, minHeight: 30 }} onClick={() => setTab('Jobs')}>See what's here</button></Popup></Marker>)}
+            <Marker position={playerPos} icon={playerIcon(game.username)}><Popup><b>{game.username}</b><br />Right here, right now.</Popup></Marker>
+            {renderedAds.map(({ raw, point, id }) => <BillboardMarker key={id} billboard={raw} position={point} icon={adIcon} onClickLink={(adId) => setAds(recordBillboardClick(adId))} onView={(adId) => setAds(recordBillboardView(adId))} />)}
+          </MapContainer>
+          <div className="map-label"><b>{selectedStop.name}</b><span>{selectedStop.area}</span></div>
+          <div className="map-tools"><button className="map-tool" title="Show my position" onClick={() => { setMapFocus(playerPos); setSelectedStop(nearest); }} data-testid="map-my-location"><MapPin size={17} /></button><button className="map-tool" title="Zoom in" onClick={() => mapInstance?.zoomIn()} data-testid="map-zoom-in"><Plus size={17} /></button><button className="map-tool" title="Map help" onClick={() => setHelpOpen(!helpOpen)} data-testid="map-help"><CircleHelp size={17} /></button></div>
+          {helpOpen && <div style={{ position: 'absolute', zIndex: 600, right: 65, top: 65, width: 210, background: '#182330', color: '#f5f0e4', padding: 14, borderRadius: 8, fontSize: 11, lineHeight: 1.5 }}>Explore with WASD or arrow keys. Use the city phone for jobs, money, a place, and supplies.<button onClick={() => setHelpOpen(false)} aria-label="Close help" style={{ float: 'right', border: 0, background: 'transparent', color: '#f5f0e4' }}><X size={14} /></button></div>}
+          {adLoading && <div style={{ position: 'absolute', bottom: 14, left: 15, zIndex: 400, background: '#f5f0e4', padding: '7px 10px', borderRadius: 5, font: '10px IBM Plex Mono' }}>Loading neighborhood ads…</div>}
+          {!adLoading && adError && <button onClick={() => void loadAds()} style={{ position: 'absolute', bottom: 14, left: 15, zIndex: 400, background: '#182330', color: 'white', padding: '8px 10px', border: 0, borderRadius: 5, font: '10px IBM Plex Mono' }}>{adError} Retry</button>}
+        </>}
       </div>
       <aside className="side-panel">
         <header className="panel-head"><div className="eyebrow">YOUR DAY, DAY ONE</div><div className="row-between"><h2 className="panel-title">A LIFE IN THE MAKING</h2><span className="mono" style={{ fontSize: 9, color: '#747b77' }}>DAY 01</span></div><div className="district-line">{nearest.area} · {game.apartmentId ? 'HAS A HOME' : 'NEW IN TOWN'}</div></header>

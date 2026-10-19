@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import type { FurniturePlacement, WorldLocation, WorldPose } from "./three/worldTypes";
 
 export type Direction = "north" | "south" | "east" | "west";
 export type TransactionKind = "income" | "expense" | "bank";
@@ -15,6 +16,8 @@ export interface GameState {
   username: string;
   character: string;
   position: { lat: number; lng: number };
+  worldPose: WorldPose;
+  worldLocation: WorldLocation;
   cash: number;
   bank: number;
   hunger: number;
@@ -23,6 +26,7 @@ export interface GameState {
   apartmentId: string;
   vehicles: string[];
   furniture: string[];
+  placedFurniture: FurniturePlacement[];
   inventory: Record<string, number>;
   transactions: Transaction[];
 }
@@ -102,6 +106,7 @@ export const APARTMENTS: Apartment[] = [
 const STORAGE_KEY = "american-dream-nyc-save-v1";
 const STARTING_POSITION = { lat: 40.758, lng: -73.9855 };
 const CITY_BOUNDS = { north: 40.92, south: 40.57, east: -73.69, west: -74.06 };
+const STARTING_WORLD_POSE: WorldPose = { x: 0, z: 4, yaw: 0 };
 
 function makeTransaction(description: string, amount: number, kind: TransactionKind): Transaction {
   return {
@@ -126,6 +131,8 @@ function freshGame(username: string, character: string): GameState {
     username: username.trim().slice(0, 20),
     character,
     position: STARTING_POSITION,
+    worldPose: STARTING_WORLD_POSE,
+    worldLocation: "street",
     cash: 1000,
     bank: 0,
     hunger: 88,
@@ -134,6 +141,7 @@ function freshGame(username: string, character: string): GameState {
     apartmentId: "walkup",
     vehicles: [],
     furniture: [],
+    placedFurniture: [],
     inventory: {},
     transactions: [makeTransaction("Welcome to New York", 1000, "income")],
   };
@@ -155,13 +163,39 @@ function isValidSave(value: unknown): value is GameState {
     && typeof game.inventory === "object";
 }
 
+function normalizeSave(game: GameState): GameState {
+  const savedPose = (game as GameState & { worldPose?: Partial<WorldPose> }).worldPose;
+  const worldPose = savedPose
+    && Number.isFinite(savedPose.x)
+    && Number.isFinite(savedPose.z)
+    && Number.isFinite(savedPose.yaw)
+    ? { x: savedPose.x as number, z: savedPose.z as number, yaw: savedPose.yaw as number }
+    : STARTING_WORLD_POSE;
+  const savedPlacements = (game as GameState & { placedFurniture?: unknown }).placedFurniture;
+  return {
+    ...game,
+    worldPose,
+    worldLocation: (game as GameState & { worldLocation?: string }).worldLocation === "apartment" ? "apartment" : "street",
+    placedFurniture: Array.isArray(savedPlacements)
+      ? savedPlacements.filter((placement): placement is FurniturePlacement => {
+        if (!placement || typeof placement !== "object") return false;
+        const item = placement as Partial<FurniturePlacement>;
+        return typeof item.itemId === "string"
+          && Number.isFinite(item.x)
+          && Number.isFinite(item.z)
+          && Number.isFinite(item.rotation);
+      })
+      : [],
+  };
+}
+
 function readSave(): { game: GameState | null; error: string | null } {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { game: null, error: null };
     const parsed: unknown = JSON.parse(raw);
     if (!isValidSave(parsed)) return { game: null, error: "Your saved game could not be read. Start a new game to continue." };
-    return { game: parsed, error: null };
+    return { game: normalizeSave(parsed), error: null };
   } catch {
     return { game: null, error: "Your saved game could not be loaded. Check browser storage, then start a new game." };
   }
@@ -188,6 +222,22 @@ export function useGameState() {
       return;
     }
     setGame(freshGame(username, character));
+  }, []);
+
+  const updateWorldPose = useCallback((pose: WorldPose) => {
+    if (![pose.x, pose.z, pose.yaw].every(Number.isFinite)) return;
+    const boundedPose = {
+      x: Math.max(-28, Math.min(28, pose.x)),
+      z: Math.max(-32, Math.min(32, pose.z)),
+      yaw: pose.yaw,
+    };
+    setGame((current) => current ? { ...current, worldPose: boundedPose } : current);
+  }, []);
+
+  const setWorldLocation = useCallback((worldLocation: WorldLocation) => {
+    setGame((current) => current && current.worldLocation !== worldLocation
+      ? { ...current, worldLocation }
+      : current);
   }, []);
 
   const move = useCallback((direction: Direction) => {
@@ -282,6 +332,31 @@ export function useGameState() {
     });
   }, []);
 
+  const placeFurniture = useCallback((itemId: string, x: number, z: number, rotation: number) => {
+    if (![x, z, rotation].every(Number.isFinite)) return;
+    setGame((current) => {
+      if (!current) return current;
+      if (!current.furniture.includes(itemId)) {
+        setSaveError("You need to buy this furniture before placing it.");
+        return current;
+      }
+      const placement = {
+        itemId,
+        x: Math.max(-3.1, Math.min(3.1, x)),
+        z: Math.max(-4.4, Math.min(4.4, z)),
+        rotation: ((rotation % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2),
+      };
+      setSaveError(null);
+      return {
+        ...current,
+        placedFurniture: [
+          ...current.placedFurniture.filter((item) => item.itemId !== itemId),
+          placement,
+        ],
+      };
+    });
+  }, []);
+
   const buySupply = useCallback((itemId: string) => {
     const item = SUPPLIES.find((entry) => entry.id === itemId);
     if (!item) return;
@@ -359,5 +434,5 @@ export function useGameState() {
     });
   }, []);
 
-  return { game, createPlayer, move, work, bank, buyCar, buyFurniture, buySupply, useSupply, rentApartment, rest, wash, saveError };
+  return { game, createPlayer, move, work, bank, buyCar, buyFurniture, placeFurniture, buySupply, useSupply, rentApartment, rest, wash, updateWorldPose, setWorldLocation, saveError };
 }
