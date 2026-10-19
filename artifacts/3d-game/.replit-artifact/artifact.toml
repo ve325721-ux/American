@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "American Dream: New York City"
+description = "A playable, mobile-first New York City life sim where players explore the real city map, work for money, buy cars and furniture, manage daily needs, and encounter local billboards."
+version = "1.0.0"
+id = "artifacts/3d-game"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24982
+
+[services.development]
+run = "pnpm --filter @workspace/3d-game run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/3d-game", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/3d-game/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24982"
+BASE_PATH = "/"

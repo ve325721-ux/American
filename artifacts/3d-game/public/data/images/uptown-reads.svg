@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 360">
+  <rect width="900" height="360" fill="#222c50"/>
+  <circle cx="730" cy="174" r="115" fill="#e99457"/>
+  <path d="M630 251l44-156 47 15-44 156zm82-113l40-66 44 24-40 67zm-154 53l33-74 43 19-33 74z" fill="#fff0d0"/>
+  <path d="M625 260h195" stroke="#f4c87b" stroke-width="13"/>
+  <text x="55" y="114" fill="#f4c87b" font-family="Arial,sans-serif" font-size="27" font-weight="700" letter-spacing="7">UPTOWN READS</text>
+  <text x="55" y="222" fill="#fff5dd" font-family="Georgia,serif" font-size="70" font-weight="700">YOUR NEXT</text>
+  <text x="55" y="302" fill="#fff5dd" font-family="Georgia,serif" font-size="70" font-weight="700">CHAPTER.</text>
+</svg>

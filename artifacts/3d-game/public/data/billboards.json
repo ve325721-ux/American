@@ -1,0 +1,50 @@
+[
+  {
+    "id": "corner-cup",
+    "title": "Corner Cup",
+    "image": "/data/images/corner-cup.svg",
+    "location": "Times Square",
+    "lat": 40.7584,
+    "lng": -73.9855,
+    "price": 720,
+    "link": "https://www.timeout.com/newyork",
+    "views": 0,
+    "clicks": 0
+  },
+  {
+    "id": "green-line",
+    "title": "Green Line Market",
+    "image": "/data/images/green-line.svg",
+    "location": "Brooklyn Bridge",
+    "lat": 40.7061,
+    "lng": -73.9969,
+    "price": 460,
+    "link": "https://www.nyc.gov/parks",
+    "views": 0,
+    "clicks": 0
+  },
+  {
+    "id": "uptown-reads",
+    "title": "Uptown Reads",
+    "image": "/data/images/uptown-reads.svg",
+    "location": "Harlem",
+    "lat": 40.8116,
+    "lng": -73.9465,
+    "price": 390,
+    "link": "https://www.nypl.org/",
+    "views": 0,
+    "clicks": 0
+  },
+  {
+    "id": "queens-night",
+    "title": "Queens After Dark",
+    "image": "/data/images/queens-night.svg",
+    "location": "Long Island City",
+    "lat": 40.7447,
+    "lng": -73.9485,
+    "price": 520,
+    "link": "https://www.timeout.com/newyork",
+    "views": 0,
+    "clicks": 0
+  }
+]

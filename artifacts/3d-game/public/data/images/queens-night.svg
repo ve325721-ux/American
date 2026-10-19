@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 360">
+  <defs><linearGradient id="bg" x2="0" y2="1"><stop stop-color="#182448"/><stop offset="1" stop-color="#572e66"/></linearGradient></defs>
+  <rect width="900" height="360" fill="url(#bg)"/>
+  <path d="M590 360V165h66v195m20 0V90h72v270m19 0V206h80v154" fill="#ef7e80"/>
+  <g fill="#ffd77c"><path d="M608 190h15v14h-15zm0 30h15v14h-15zm44-98h16v16h-16zm33 0h16v16h-16zm-33 31h16v16h-16zm33 0h16v16h-16zm31 97h16v15h-16z"/></g>
+  <text x="55" y="111" fill="#9ce6df" font-family="Arial,sans-serif" font-size="27" font-weight="700" letter-spacing="6">QUEENS AFTER DARK</text>
+  <text x="55" y="224" fill="#fff1e7" font-family="Arial,sans-serif" font-size="68" font-weight="900">STAY OUT.</text>
+  <text x="55" y="301" fill="#fff1e7" font-family="Arial,sans-serif" font-size="68" font-weight="900">FIND YOUR CITY.</text>
+</svg>

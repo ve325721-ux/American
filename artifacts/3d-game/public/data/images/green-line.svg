@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 360">
+  <defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#aee9bf"/><stop offset="1" stop-color="#2d9272"/></linearGradient></defs>
+  <rect width="900" height="360" fill="url(#bg)"/>
+  <path d="M650 360V106l45 28v-50l47 29V55l49 37v268" fill="#183c39" opacity=".9"/>
+  <circle cx="739" cy="177" r="65" fill="#f7d36c"/>
+  <path d="M685 177h108M739 123v108" stroke="#183c39" stroke-width="13"/>
+  <text x="54" y="115" fill="#193e39" font-family="Arial,sans-serif" font-size="27" font-weight="700" letter-spacing="6">GREEN LINE MARKET</text>
+  <text x="54" y="225" fill="#fff9e9" font-family="Arial,sans-serif" font-size="67" font-weight="900">GOOD THINGS</text>
+  <text x="54" y="299" fill="#fff9e9" font-family="Arial,sans-serif" font-size="67" font-weight="900">GROW HERE.</text>
+</svg>
