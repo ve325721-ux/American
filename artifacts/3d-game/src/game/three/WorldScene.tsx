@@ -10,6 +10,7 @@ import type {
 } from './worldTypes';
 import { NycCity, addCar } from './nyc/NycCity';
 import { GeoBuilder } from './nyc/geometry';
+import type { CameraMode } from '../cameraSettings';
 import {
   BUILDING_COLLIDERS,
   HOME_DOOR_POSE,
@@ -32,12 +33,16 @@ export interface InputState {
   sprint: boolean;
   stickX: number;
   stickY: number;
+  /** Accumulated look input in radians (yaw / pitch), consumed every frame. */
   cameraX: number;
   cameraY: number;
+  /** Accumulated mouse-wheel zoom steps for the third-person camera. */
+  zoom: number;
 }
 
 interface SceneProps extends CityWorldProps {
   input: MutableRefObject<InputState>;
+  cameraMode: CameraMode;
   onNearbyChange: (target: WorldInteraction | null) => void;
 }
 
@@ -66,6 +71,13 @@ export const DRIVABLE: Record<string, { kind: number; color: string; label: stri
 
 const clamp = (value: number, low: number, high: number) =>
   Math.max(low, Math.min(high, value));
+
+/** Pitch limits: ~88° up at the sky, ~88° down at your feet. */
+const PITCH_UP = 1.54;
+const PITCH_DOWN = -1.54;
+const DEFAULT_PITCH = -0.24;
+const CAMERA_MIN_Y = 0.35;
+const CAMERA_PAD = 0.32;
 
 function Block({
   position,
@@ -379,6 +391,7 @@ export function WorldScene(props: SceneProps) {
   const {
     location, initialPose, input, onPoseChange, onToggleDrive, onPlaceFurniture, onInspectFurniture,
     placements, pendingFurnitureId, character, driving, paused, onNearbyChange, vehicleId, onPlaceChange,
+    cameraMode,
   } = props;
 
   const actor = useRef<ThreeGroup | null>(null);
@@ -393,7 +406,12 @@ export function WorldScene(props: SceneProps) {
   const previousLocation = useRef(location);
   const yaw = useRef(initialPose.yaw || 0);
   const cameraYaw = useRef(pose.current.yaw || 0);
-  const cameraPitch = useRef(0);
+  const cameraPitch = useRef(DEFAULT_PITCH);
+  const zoomDist = useRef(6.5);
+  const camDist = useRef(6.5);
+  const pivot = useRef(new THREE.Vector3(initialPose.x, 1.65, initialPose.z));
+  const snapCamera = useRef(true);
+  const avatarVisible = useRef(true);
   const lastManualLook = useRef(-10);
   const lastPoseNotify = useRef(0);
   const lastPlace = useRef('');
@@ -412,7 +430,8 @@ export function WorldScene(props: SceneProps) {
     pose.current = location === 'apartment' ? { x: 0, z: 3.2, yaw: 0 } : { ...HOME_DOOR_POSE };
     yaw.current = pose.current.yaw;
     cameraYaw.current = pose.current.yaw;
-    cameraPitch.current = 0;
+    cameraPitch.current = DEFAULT_PITCH;
+    snapCamera.current = true;
   }, [location]);
 
   useFrame((state, delta) => {
@@ -420,11 +439,14 @@ export function WorldScene(props: SceneProps) {
     const controls = input.current;
     const street = location === 'street';
 
+    // Free look: 360° yaw, near-vertical pitch. Looking never moves the character.
     if (controls.cameraX || controls.cameraY) lastManualLook.current = state.clock.elapsedTime;
-    cameraYaw.current += controls.cameraX;
-    cameraPitch.current = clamp(cameraPitch.current + controls.cameraY * 0.01, -0.65, 0.65);
+    cameraYaw.current = Math.atan2(Math.sin(cameraYaw.current + controls.cameraX), Math.cos(cameraYaw.current + controls.cameraX));
+    cameraPitch.current = clamp(cameraPitch.current + controls.cameraY, PITCH_DOWN, PITCH_UP);
+    zoomDist.current = clamp(zoomDist.current + controls.zoom, 2.5, 11);
     controls.cameraX = 0;
     controls.cameraY = 0;
+    controls.zoom = 0;
 
     // Getting in / out of the car.
     if (wasDriving.current !== driving) {
@@ -532,26 +554,73 @@ export function WorldScene(props: SceneProps) {
       vehicle.current.rotation.y = carPose.current.yaw;
     }
 
-    // Third-person camera that pulls in instead of clipping into buildings.
-    const wantDist = driving ? 10 : 6.5;
-    const sinY = Math.sin(cameraYaw.current), cosY = Math.cos(cameraYaw.current);
-    let dist = wantDist;
-    if (street) {
-      for (let d = 1.2; d <= wantDist; d += 0.5) {
-        if (blocked(pose.current.x + sinY * d, pose.current.z + cosY * d, 0.35, BUILDING_COLLIDERS)) { dist = Math.max(1.2, d - 0.6); break; }
+    const firstPerson = cameraMode === 'first';
+    const camera = state.camera;
+    const yawNow = cameraYaw.current;
+    const pitchNow = cameraPitch.current;
+    // Camera orientation comes straight from yaw/pitch (no lookAt), so the view
+    // can point straight up at the sky or straight down at the pavement.
+    camera.rotation.set(pitchNow, yawNow, 0, 'YXZ');
+
+    // Is a camera position inside a wall / building?
+    const solid = (x: number, z: number) => street
+      ? blocked(x, z, CAMERA_PAD * 0.6, BUILDING_COLLIDERS)
+      : Math.abs(x) > 4.75 - CAMERA_PAD || Math.abs(z) > 4.75 - CAMERA_PAD;
+    const ceiling = street ? 400 : 5.7;
+
+    if (firstPerson) {
+      // Eyes of the character (or the driver's seat).
+      let ex = pose.current.x, ez = pose.current.z, ey = street ? 1.82 : 1.67;
+      if (driving) {
+        const c = carPose.current;
+        const cs = Math.cos(c.yaw), sn = Math.sin(c.yaw);
+        const lx = -0.42, lz = 0.25;
+        ex = c.x + lx * cs + lz * sn;
+        ez = c.z - lx * sn + lz * cs;
+        ey = DRIVABLE[carId].kind === 3 ? 1.6 : 1.22;
       }
+      pivot.current.set(ex, ey, ez);
+      camera.position.copy(pivot.current);
+      snapCamera.current = true;
+      avatarVisible.current = false;
     } else {
-      dist = Math.min(dist, 5.2);
+      // Smoothly follow a pivot at head height.
+      const target = driving
+        ? [carPose.current.x, 1.6, carPose.current.z]
+        : [pose.current.x, (street ? 0.15 : 0) + 1.65, pose.current.z];
+      const follow = snapCamera.current ? 1 : 1 - Math.exp(-10 * dt);
+      pivot.current.x += (target[0] - pivot.current.x) * follow;
+      pivot.current.y += (target[1] - pivot.current.y) * follow;
+      pivot.current.z += (target[2] - pivot.current.z) * follow;
+      const p = pivot.current;
+
+      const wantDist = driving ? Math.max(zoomDist.current, 8) + 1.5 : zoomDist.current;
+      const cosP = Math.cos(pitchNow), sinP = Math.sin(pitchNow);
+      // Behind = opposite of view direction on the ground plane.
+      const backX = Math.sin(yawNow), backZ = Math.cos(yawNow);
+      // When looking up, keep a little horizontal offset so the character
+      // doesn't fill the screen; when looking down, rise up over their head.
+      const horizFactor = pitchNow > 0 ? Math.max(cosP, 0.55) : cosP;
+      let horiz = wantDist * horizFactor;
+      // Pull in before walls / buildings (march along the ground-plane ray).
+      for (let d = 0.4; d <= horiz + 0.001; d += 0.25) {
+        if (solid(p.x + backX * d, p.z + backZ * d)) { horiz = Math.max(0.25, d - 0.45); break; }
+      }
+      let camY = p.y - wantDist * sinP;
+      camY = clamp(camY, CAMERA_MIN_Y, ceiling);
+      const distNow = Math.hypot(horiz, camY - p.y);
+      // Snap in quickly on collisions, ease back out slowly.
+      camDist.current = snapCamera.current || distNow < camDist.current
+        ? distNow
+        : camDist.current + (distNow - camDist.current) * (1 - Math.exp(-4 * dt));
+      const scale = distNow > 0.001 ? camDist.current / distNow : 1;
+      camera.position.set(p.x + backX * horiz * scale, p.y + (camY - p.y) * scale, p.z + backZ * horiz * scale);
+      if (camera.position.y < CAMERA_MIN_Y) camera.position.y = CAMERA_MIN_Y;
+      snapCamera.current = false;
+      // Hide the avatar when the camera is squeezed right up against them.
+      avatarVisible.current = driving || horiz * scale > 0.9 || camera.position.y > p.y + 0.6;
     }
-    const follow = 1 - Math.exp(-6 * dt);
-    const camX = pose.current.x + sinY * dist;
-    const camZ = pose.current.z + cosY * dist;
-    const camY = (driving ? 4.2 : 3.4) + Math.sin(cameraPitch.current) * 2.5;
-    const targetY = (driving ? 1.4 : 1.6) - Math.sin(cameraPitch.current) * 3.5;
-    state.camera.position.x += (camX - state.camera.position.x) * follow;
-    state.camera.position.y += (camY - state.camera.position.y) * follow;
-    state.camera.position.z += (camZ - state.camera.position.z) * follow;
-    state.camera.lookAt(pose.current.x, targetY, pose.current.z);
+    if (actor.current) actor.current.visible = avatarVisible.current || driving;
 
     // Sun + shadow frustum follow the player.
     if (sun.current) {

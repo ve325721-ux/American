@@ -5,16 +5,17 @@ import { publishableKeyFromHost } from '@clerk/react/internal';
 import { shadcn } from '@clerk/themes';
 import { MapContainer, Marker, Popup, TileLayer, useMap } from 'react-leaflet';
 import L from 'leaflet';
-import { Banknote, BedDouble, BriefcaseBusiness, CarFront, ChevronDown, ChevronUp, CircleHelp, Compass, ExternalLink, Home, Map as MapIcon, MapPin, Plus, ShoppingBag, WashingMachine, Wallet, X } from 'lucide-react';
+import { Banknote, BedDouble, BriefcaseBusiness, CarFront, ChevronDown, ChevronUp, CircleHelp, Compass, ExternalLink, Home, Map as MapIcon, MapPin, Plus, Settings as SettingsIcon, ShoppingBag, WashingMachine, Wallet, X } from 'lucide-react';
 import { useGameState } from './game/useGameState';
 import * as gameExports from './game/useGameState';
 import { loadBillboards, saveBillboards, recordBillboardView, recordBillboardClick } from './game/billboardStore';
 import type { Billboard } from './game/billboardStore';
 import { CityWorld } from './game/three/CityWorld';
+import { SENSITIVITY_MAX, SENSITIVITY_MIN, resetCameraSettings, updateCameraSettings, useCameraSettings } from './game/cameraSettings';
 import type { WorldInteraction, WorldLocation } from './game/three/worldTypes';
 
 type Direction = 'north' | 'south' | 'east' | 'west';
-type Tab = 'Map' | 'Jobs' | 'Bank' | 'Cars' | 'Home' | 'Shop';
+type Tab = 'Map' | 'Jobs' | 'Bank' | 'Cars' | 'Home' | 'Shop' | 'Settings';
 type AnyRecord = Record<string, any>;
 
 const stops = [
@@ -28,7 +29,7 @@ const stops = [
   { name: 'The Bronx', area: 'THE BRONX • ROOTS & RHYTHM', position: [40.8448, -73.8648] as [number, number], color: '#ab793d' },
 ];
 
-const tabIcons: Record<Tab, typeof MapIcon> = { Map: MapIcon, Jobs: BriefcaseBusiness, Bank: Banknote, Cars: CarFront, Home, Shop: ShoppingBag };
+const tabIcons: Record<Tab, typeof MapIcon> = { Map: MapIcon, Jobs: BriefcaseBusiness, Bank: Banknote, Cars: CarFront, Home, Shop: ShoppingBag, Settings: SettingsIcon };
 const looks = ['Classic', 'Creative', 'Street', 'Polished'];
 const lookColors = ['#d59c70', '#b56748', '#e0ba8e', '#9b634c'];
 const playerIcon = (label: string) => L.divIcon({ className: '', html: `<div class="player-marker">${label.slice(0, 1).toUpperCase()}</div>`, iconSize: [34, 34], iconAnchor: [17, 17] });
@@ -246,6 +247,7 @@ function GameScreen() {
     {tab === 'Bank' && <><div className="content-kicker">YOUR MONEY, YOUR CALL.</div><div className="action-card"><div className="row-between"><h3>AVAILABLE CASH</h3><span className="price">{cash(game.cash)}</span></div><p>Keep cash for the street. Put a little away for later.</p><div className="form-row"><input className="input-dark" value={bankAmount} type="number" min="1" onChange={(e) => setBankAmount(e.target.value)} aria-label="Amount" data-testid="input-bank-amount" /></div><div className="row-between" style={{ marginTop: 9 }}><button className="game-btn secondary" onClick={() => call(() => bank('deposit', Number(bankAmount)), `Deposited ${cash(Number(bankAmount))}.`)} data-testid="bank-deposit">Deposit</button><button className="game-btn ghost" onClick={() => call(() => bank('withdraw', Number(bankAmount)), `Withdrew ${cash(Number(bankAmount))}.`)} data-testid="bank-withdraw">Withdraw</button></div></div><div className="action-card"><div className="row-between"><h3>SAVINGS</h3><span className="price">{cash(game.bank)}</span></div><p>Deposits stay in your account. No city shortcut, just steady choices.</p></div><div className="content-kicker">RECENT MONEY MOVES</div>{game.transactions.slice(0, 12).map((transaction: AnyRecord, i: number) => <div key={`${i}-${transaction.amount}`} className="row-between" style={{ borderBottom: '1px solid #34414b', padding: '9px 1px', fontSize: 11 }}><span>{transaction.description ?? transaction.label ?? transaction.type ?? 'Transaction'}</span><span className="price">{transaction.amount >= 0 ? '+' : ''}{cash(Math.abs(Number(transaction.amount)))}</span></div>)}</>}
     {tab === 'Cars' && <><div className="content-kicker">THE CITY MOVES FAST. SO CAN YOU.</div><div className="action-card"><div className="row-between"><h3>YOUR GARAGE</h3><CarFront size={18} color="#f1c751" /></div><p>{game.vehicles.length ? `${game.vehicles.length} ride${game.vehicles.length > 1 ? 's' : ''} in your name.` : 'No wheels yet. Every borough is still in reach.'}</p>{game.vehicles.map((id: string) => <div key={id} className="price">{itemName(cars.find((car) => itemId(car, 0) === id) ?? { id })}</div>)}</div>{cars.map((car, i) => { const owned = game.vehicles.includes(itemId(car, i)); return <div className="action-card" key={itemId(car, i)}><div className="row-between"><h3>{itemName(car)}</h3><span className="price">{cash(itemPrice(car))}</span></div><p>{itemDescription(car)}</p><button className="game-btn" disabled={owned || game.cash < itemPrice(car)} onClick={() => call(() => buyCar(itemId(car, i)), `Bought ${itemName(car)}.`)} data-testid={`buy-car-${itemId(car, i)}`}>{owned ? 'In your garage' : 'Buy ride'}</button></div>; })}</>}
     {tab === 'Home' && <><div className="content-kicker">SOMEWHERE TO LAND BETWEEN EVERYTHING ELSE.</div><div className="action-card"><div className="row-between"><h3>YOUR PLACE</h3><Home size={17} color="#f1c751" /></div><p>{game.apartmentId ? `${itemName(apartments.find((place) => itemId(place, 0) === game.apartmentId) ?? { id: game.apartmentId })} is home.` : 'No lease yet. A place of your own changes the whole rhythm.'}</p><button className="game-btn secondary" onClick={() => call(rest, 'You took a moment to rest.')} data-testid="button-rest"><BedDouble size={13} style={{ verticalAlign: 'middle', marginRight: 6 }} />Rest</button><button className="game-btn ghost" style={{ marginLeft: 7 }} onClick={() => call(wash, 'You cleaned up. Fresh start.')} data-testid="button-wash"><WashingMachine size={13} style={{ verticalAlign: 'middle', marginRight: 6 }} />Wash up</button></div>{apartments.map((place, i) => { const current = itemId(place, i) === game.apartmentId; return <div className="action-card" key={itemId(place, i)}><div className="row-between"><h3>{itemName(place)}</h3><span className="price">{cash(itemPrice(place))}</span></div><p>{itemDescription(place)}</p><button className="game-btn" disabled={current || game.cash < itemPrice(place)} onClick={() => call(() => rentApartment(itemId(place, i)), 'You found a place to call home.')} data-testid={`rent-${itemId(place, i)}`}>{current ? 'Your current home' : 'Rent this place'}</button></div>; })}<div className="content-kicker" style={{ marginTop: 15 }}>MAKE IT FEEL LIKE YOURS</div>{furniture.map((item, i) => { const owned = game.furniture.includes(itemId(item, i)); return <div className="action-card" key={itemId(item, i)}><div className="row-between"><h3>{itemName(item)}</h3><span className="price">{cash(itemPrice(item))}</span></div><p>{itemDescription(item)}</p><button className="game-btn ghost" disabled={owned || game.cash < itemPrice(item)} onClick={() => call(() => buyFurniture(itemId(item, i)), `Added ${itemName(item)} to your place.`)} data-testid={`buy-furniture-${itemId(item, i)}`}>{owned ? 'Already at home' : 'Bring it home'}</button></div>; })}</>}
+    {tab === 'Settings' && <CameraSettingsPanel />}
     {tab === 'Shop' && <><div className="content-kicker">SMALL THINGS KEEP YOU GOING.</div>{supplies.map((supply, i) => <div className="action-card" key={itemId(supply, i)}><div className="row-between"><h3>{itemName(supply)}</h3><span className="price">{cash(itemPrice(supply))}</span></div><p>{itemDescription(supply)}</p><div className="row-between"><span className="price">In bag: {game.inventory[itemId(supply, i)] ?? 0}</span><button className="game-btn" disabled={game.cash < itemPrice(supply)} onClick={() => call(() => buySupply(itemId(supply, i)), `${itemName(supply)} added to your bag.`)} data-testid={`buy-supply-${itemId(supply, i)}`}>Buy</button></div>{(game.inventory[itemId(supply, i)] ?? 0) > 0 && <button className="game-btn secondary" style={{ marginTop: 8 }} onClick={() => call(() => useSupply(itemId(supply, i)), `Used ${itemName(supply)}.`)} data-testid={`use-supply-${itemId(supply, i)}`}>Use one</button>}</div>)}</>}
   </div>;
 
@@ -299,13 +301,40 @@ function GameScreen() {
       <aside className="side-panel">
         <header className="panel-head"><div className="eyebrow">YOUR DAY, DAY ONE</div><div className="row-between"><h2 className="panel-title">A LIFE IN THE MAKING</h2><span className="mono" style={{ fontSize: 9, color: '#747b77' }}>DAY 01</span></div><div className="district-line">{nearest.area} · {game.apartmentId ? 'HAS A HOME' : 'NEW IN TOWN'}</div></header>
         <div className="needs">{status.map(([label, value, unit]) => <div key={label}><div className="need-label"><span>{label}</span><span>{Math.round(value)}%</span></div><div className={`meter ${value < 30 ? 'low' : ''}`}><i style={{ width: `${Math.max(0, Math.min(100, value))}%` }} /></div></div>)}</div>
-        <nav className="phone-tabs" aria-label="City phone">{(['Map', 'Jobs', 'Bank', 'Cars', 'Home', 'Shop'] as Tab[]).map((name) => { const Icon = tabIcons[name]; return <button key={name} className={`phone-tab ${tab === name ? 'active' : ''}`} onClick={() => setTab(name)} data-testid={`tab-${name.toLowerCase()}`}><Icon />{name}</button>; })}</nav>
+        <nav className="phone-tabs" aria-label="City phone">{(['Map', 'Jobs', 'Bank', 'Cars', 'Home', 'Shop', 'Settings'] as Tab[]).map((name) => { const Icon = tabIcons[name]; return <button key={name} className={`phone-tab ${tab === name ? 'active' : ''}`} onClick={() => setTab(name)} data-testid={`tab-${name.toLowerCase()}`}><Icon />{name}</button>; })}</nav>
         {currentTab}
       </aside>
     </div>
     {saveError && <div className="toast-message" role="alert">{saveError}</div>}
     {!saveError && notice && <div className="toast-message" role="status">{notice}</div>}
   </main>;
+}
+
+function CameraSettingsPanel() {
+  const camera = useCameraSettings();
+  return <>
+    <div className="content-kicker">PHONE SETTINGS · CAMERA</div>
+    <div className="action-card">
+      <div className="row-between"><h3>VIEW</h3><span className="price">{camera.mode === 'first' ? 'FIRST PERSON' : 'THIRD PERSON'}</span></div>
+      <p>See the city through your own eyes, or follow from just behind your shoulder. Press V in the 3D world to switch.</p>
+      <div className="row-between" style={{ gap: 7 }}>
+        <button className={`game-btn ${camera.mode === 'third' ? '' : 'ghost'}`} style={{ flex: 1 }} aria-pressed={camera.mode === 'third'} onClick={() => updateCameraSettings({ mode: 'third' })} data-testid="settings-camera-third">Third person</button>
+        <button className={`game-btn ${camera.mode === 'first' ? '' : 'ghost'}`} style={{ flex: 1 }} aria-pressed={camera.mode === 'first'} onClick={() => updateCameraSettings({ mode: 'first' })} data-testid="settings-camera-first">First person</button>
+      </div>
+    </div>
+    <div className="action-card">
+      <div className="row-between"><h3>LOOK SENSITIVITY</h3><span className="price">{camera.sensitivity.toFixed(2)}×</span></div>
+      <p>How fast the camera turns when you move the mouse (holding the right button) or swipe the right side of the screen.</p>
+      <input type="range" className="settings-range" min={SENSITIVITY_MIN} max={SENSITIVITY_MAX} step={0.05} value={camera.sensitivity} onChange={(e) => updateCameraSettings({ sensitivity: Number(e.target.value) })} aria-label="Camera look sensitivity" data-testid="settings-camera-sensitivity" />
+      <div className="row-between" style={{ fontSize: 9, color: '#8f948c' }}><span>SLOW</span><span>FAST</span></div>
+    </div>
+    <div className="action-card">
+      <div className="row-between"><h3>INVERT VERTICAL LOOK</h3><span className="price">{camera.invertY ? 'ON' : 'OFF'}</span></div>
+      <p>Flip up and down: move or swipe down to look up at the rooftops.</p>
+      <button className="game-btn ghost" aria-pressed={camera.invertY} onClick={() => updateCameraSettings({ invertY: !camera.invertY })} data-testid="settings-camera-invert">{camera.invertY ? 'Turn off' : 'Turn on'}</button>
+    </div>
+    <button className="game-btn secondary" onClick={resetCameraSettings} data-testid="settings-camera-reset">Reset camera settings</button>
+  </>;
 }
 
 function BillboardManager() {
