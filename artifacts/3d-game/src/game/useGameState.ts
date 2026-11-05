@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { FurniturePlacement, WorldLocation, WorldPose } from "./three/worldTypes";
+import { HOME_DOOR_POSE, PLAY, worldToLatLng } from "./three/nyc/layout";
 
 export type Direction = "north" | "south" | "east" | "west";
 export type TransactionKind = "income" | "expense" | "bank";
@@ -29,6 +30,7 @@ export interface GameState {
   placedFurniture: FurniturePlacement[];
   inventory: Record<string, number>;
   transactions: Transaction[];
+  worldVersion?: number;
 }
 
 export interface Job {
@@ -72,9 +74,9 @@ export interface Apartment {
 }
 
 export const JOBS: Job[] = [
-  { id: "barista", name: "Barista shift", description: "A morning behind the counter in Midtown.", pay: 180, energyCost: 9, hungerCost: 6 },
-  { id: "courier", name: "Bike courier", description: "Beat the traffic and deliver downtown.", pay: 245, energyCost: 16, hungerCost: 12 },
-  { id: "photo-assistant", name: "Photo assistant", description: "Help a local crew on a street shoot.", pay: 320, energyCost: 21, hungerCost: 10 },
+  { id: "barista", name: "Barista shift", description: "Pull espresso for the morning rush at Tompkins Coffee Co. on St Marks Pl.", pay: 180, energyCost: 9, hungerCost: 6 },
+  { id: "courier", name: "Bike courier", description: "Run packages from Rapid Courier Dispatch on 2nd Avenue across downtown.", pay: 245, energyCost: 16, hungerCost: 12 },
+  { id: "photo-assistant", name: "Photo assistant", description: "Haul gear and set lights at Ninth St Photo Studio.", pay: 320, energyCost: 21, hungerCost: 10 },
 ];
 
 export const CARS: Vehicle[] = [
@@ -92,21 +94,24 @@ export const FURNITURE: Furniture[] = [
 ];
 
 export const SUPPLIES: Supply[] = [
-  { id: "deli-sandwich", name: "Deli Sandwich", price: 14, description: "A quick meal from the corner deli.", effect: "hunger", restore: 38 },
+  { id: "deli-sandwich", name: "Bacon, Egg & Cheese", price: 7, description: "The bodega classic on a roll, salt-pepper-ketchup.", effect: "hunger", restore: 38 },
   { id: "energy-drink", name: "Energy Drink", price: 8, description: "A quick boost for the afternoon.", effect: "energy", restore: 24 },
+  { id: "pizza-slice", name: "Dollar-and-change Slice", price: 4, description: "A New York slice, folded and eaten on the sidewalk.", effect: "hunger", restore: 26 },
+  { id: "bodega-coffee", name: "Bodega Coffee", price: 3, description: "Light and sweet, in the blue-and-white cup.", effect: "energy", restore: 18 },
   { id: "soap", name: "Soap & Shampoo", price: 11, description: "The essentials for a fresh start.", effect: "hygiene", restore: 42 },
 ];
 
 export const APARTMENTS: Apartment[] = [
-  { id: "walkup", name: "Walk-up Studio", rent: 0, description: "Your first keys. Small, affordable, all yours." },
-  { id: "brownstone", name: "Brooklyn Brownstone", rent: 4800, description: "A sunlit brownstone with room to breathe." },
-  { id: "skyline", name: "Midtown Skyline", rent: 22000, description: "A corner apartment above the city lights." },
+  { id: "walkup", name: "E 7th St Walk-up, Apt 3B", rent: 0, description: "Your first keys: a fourth-floor tenement studio with a fire escape and a radiator that clanks." },
+  { id: "brownstone", name: "Brooklyn Brownstone", rent: 4800, description: "A parlor-floor one-bedroom in a Park Slope brownstone." },
+  { id: "skyline", name: "Midtown Doorman Tower", rent: 22000, description: "A corner two-bedroom on a high floor with Empire State views." },
 ];
 
 const STORAGE_KEY = "american-dream-nyc-save-v1";
-const STARTING_POSITION = { lat: 40.758, lng: -73.9855 };
+const WORLD_VERSION = 2;
+const STARTING_POSITION = worldToLatLng(HOME_DOOR_POSE.x, HOME_DOOR_POSE.z);
 const CITY_BOUNDS = { north: 40.92, south: 40.57, east: -73.69, west: -74.06 };
-const STARTING_WORLD_POSE: WorldPose = { x: 0, z: 4, yaw: 0 };
+const STARTING_WORLD_POSE: WorldPose = { ...HOME_DOOR_POSE };
 
 function makeTransaction(description: string, amount: number, kind: TransactionKind): Transaction {
   return {
@@ -144,6 +149,7 @@ function freshGame(username: string, character: string): GameState {
     placedFurniture: [],
     inventory: {},
     transactions: [makeTransaction("Welcome to New York", 1000, "income")],
+    worldVersion: WORLD_VERSION,
   };
 }
 
@@ -169,11 +175,13 @@ function normalizeSave(game: GameState): GameState {
     && Number.isFinite(savedPose.x)
     && Number.isFinite(savedPose.z)
     && Number.isFinite(savedPose.yaw)
+    && game.worldVersion === WORLD_VERSION
     ? { x: savedPose.x as number, z: savedPose.z as number, yaw: savedPose.yaw as number }
     : STARTING_WORLD_POSE;
   const savedPlacements = (game as GameState & { placedFurniture?: unknown }).placedFurniture;
   return {
     ...game,
+    worldVersion: WORLD_VERSION,
     worldPose,
     worldLocation: (game as GameState & { worldLocation?: string }).worldLocation === "apartment" ? "apartment" : "street",
     placedFurniture: Array.isArray(savedPlacements)
@@ -227,11 +235,16 @@ export function useGameState() {
   const updateWorldPose = useCallback((pose: WorldPose) => {
     if (![pose.x, pose.z, pose.yaw].every(Number.isFinite)) return;
     const boundedPose = {
-      x: Math.max(-28, Math.min(28, pose.x)),
-      z: Math.max(-32, Math.min(32, pose.z)),
+      x: Math.max(PLAY.minX, Math.min(PLAY.maxX, pose.x)),
+      z: Math.max(PLAY.minZ, Math.min(PLAY.maxZ, pose.z)),
       yaw: pose.yaw,
     };
-    setGame((current) => current ? { ...current, worldPose: boundedPose } : current);
+    setGame((current) => {
+      if (!current) return current;
+      // Only the street pose maps onto real NYC coordinates.
+      const position = current.worldLocation === "street" ? worldToLatLng(boundedPose.x, boundedPose.z) : current.position;
+      return { ...current, worldPose: boundedPose, position };
+    });
   }, []);
 
   const setWorldLocation = useCallback((worldLocation: WorldLocation) => {
@@ -434,5 +447,40 @@ export function useGameState() {
     });
   }, []);
 
-  return { game, createPlayer, move, work, bank, buyCar, buyFurniture, placeFurniture, buySupply, useSupply, rentApartment, rest, wash, updateWorldPose, setWorldLocation, saveError };
+  /** Buy a supply and use it straight away (e.g. a slice eaten at the counter). */
+  const buyAndUse = useCallback((itemId: string) => {
+    const item = SUPPLIES.find((entry) => entry.id === itemId);
+    if (!item) return false;
+    let ok = false;
+    setGame((current) => {
+      if (!current) return current;
+      if (current.cash < item.price) {
+        setSaveError(`You need ${'$'}${item.price} for ${item.name}.`);
+        return current;
+      }
+      ok = true;
+      setSaveError(null);
+      return withTransaction({
+        ...current,
+        cash: current.cash - item.price,
+        [item.effect]: bounded(current[item.effect] + item.restore),
+      }, item.name, -item.price, "expense");
+    });
+    return ok;
+  }, []);
+
+  /** Pay the MTA fare and ride to a destination on the NYC map. */
+  const rideSubway = useCallback((lat: number, lng: number, label: string) => {
+    setGame((current) => {
+      if (!current) return current;
+      if (current.cash < 2.9) {
+        setSaveError("You need $2.90 for the subway fare.");
+        return current;
+      }
+      setSaveError(null);
+      return withTransaction({ ...current, cash: Math.round((current.cash - 2.9) * 100) / 100, position: { lat, lng }, energy: bounded(current.energy - 4) }, `MTA subway fare to ${label}`, -2.9, "expense");
+    });
+  }, []);
+
+  return { game, buyAndUse, rideSubway, createPlayer, move, work, bank, buyCar, buyFurniture, placeFurniture, buySupply, useSupply, rentApartment, rest, wash, updateWorldPose, setWorldLocation, saveError };
 }

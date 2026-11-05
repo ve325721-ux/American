@@ -2,19 +2,11 @@ import { Component, useCallback, useEffect, useRef, useState } from 'react';
 import type { ErrorInfo, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { Canvas } from '@react-three/fiber';
 import type { CityWorldProps, WorldInteraction } from './worldTypes';
-import { WorldScene } from './WorldScene';
+import { WorldScene, type InputState } from './WorldScene';
+import { POIS } from './nyc/layout';
 import './cityWorld.css';
 
-interface InputState {
-  forward: boolean;
-  back: boolean;
-  left: boolean;
-  right: boolean;
-  stickX: number;
-  stickY: number;
-  cameraX: number;
-  cameraY: number;
-}
+
 
 interface ErrorBoundaryState {
   failed: boolean;
@@ -56,6 +48,7 @@ const emptyInput = (): InputState => ({
   back: false,
   left: false,
   right: false,
+  sprint: false,
   stickX: 0,
   stickY: 0,
   cameraX: 0,
@@ -90,6 +83,7 @@ export function CityWorld(props: CityWorldProps) {
   });
 
   const [canvasError, setCanvasError] = useState(false);
+  const [place, setPlace] = useState({ street: 'E 7th St · 1 Av – Av A', hood: 'EAST VILLAGE' });
 
   const pointer = useRef<{
     x: number;
@@ -131,6 +125,7 @@ export function CityWorld(props: CityWorldProps) {
         return;
       }
 
+      if (event.code === 'ShiftLeft' || event.code === 'ShiftRight') input.current.sprint = true;
       if (keys[event.code]) {
         input.current[
           keys[event.code] as 'forward' | 'back' | 'left' | 'right'
@@ -148,6 +143,7 @@ export function CityWorld(props: CityWorldProps) {
     };
 
     const up = (event: KeyboardEvent) => {
+      if (event.code === 'ShiftLeft' || event.code === 'ShiftRight') input.current.sprint = false;
       if (keys[event.code]) {
         input.current[
           keys[event.code] as 'forward' | 'back' | 'left' | 'right'
@@ -273,20 +269,17 @@ export function CityWorld(props: CityWorldProps) {
     pointer.current = null;
   };
 
+  const poi = POIS.find((p) => p.id === nearby);
   const promptText =
-    nearby === 'apartment'
-      ? 'ENTER YOUR APARTMENT'
-      : nearby === 'apartment-exit'
-        ? 'STEP BACK OUTSIDE'
-        : nearby === 'furniture-shop'
-          ? 'VISIT FURNITURE SHOP'
-          : nearby === 'dealership'
-            ? 'VISIT VEHICLE DEALERSHIP'
-            : nearby === 'test-car'
-              ? driving
-                ? 'EXIT TEST DRIVE'
-                : 'TAKE THE TEST CAR'
-              : '';
+    nearby === 'apartment-exit'
+      ? 'STEP BACK OUT ONTO E 7TH ST'
+      : nearby === 'test-car'
+        ? driving
+          ? 'PARK & STEP OUT'
+          : props.vehicleId
+            ? 'GET IN YOUR CAR'
+            : 'TAKE THE LOANER FOR A DRIVE'
+        : poi?.prompt ?? '';
 
   const interact = () => {
     if (nearby) activate(nearby);
@@ -317,17 +310,18 @@ export function CityWorld(props: CityWorldProps) {
             data-testid="world-canvas"
           >
             <Canvas
-              camera={{ position: [0, 5, 9], fov: 48 }}
+              shadows
+              camera={{ position: [0, 5, 9], fov: 55, near: 0.3, far: 2200 }}
               dpr={[1, 1.35]}
               gl={{
-                antialias: false,
-                powerPreference: 'low-power',
+                antialias: true,
+                powerPreference: 'high-performance',
                 alpha: false,
                 failIfMajorPerformanceCaveat: false,
               }}
               onCreated={({ gl }) => {
                 gl.setClearColor('#b9d3d0');
-                gl.shadowMap.enabled = false;
+                gl.shadowMap.enabled = true;
               }}
               onError={() => setCanvasError(true)}
             >
@@ -335,6 +329,7 @@ export function CityWorld(props: CityWorldProps) {
                 {...props}
                 input={input}
                 onNearbyChange={setNearby}
+                onPlaceChange={(next) => { setPlace(next); props.onPlaceChange?.(next); }}
               />
             </Canvas>
 
@@ -344,18 +339,15 @@ export function CityWorld(props: CityWorldProps) {
             >
               <span className="cw-live-dot" />
               {location === 'street'
-                ? 'EAST VILLAGE · NEW YORK'
-                : 'YOUR WALK-UP · APARTMENT 3B'}
+                ? `${place.street.toUpperCase()} · ${place.hood}`
+                : 'YOUR WALK-UP · APT 3B · E 7TH ST'}
             </div>
 
             {location === 'street' && (
-              <div
-                className="cw-place-tags"
-                aria-hidden="true"
-              >
-                <span>HOME</span>
-                <span>FURNITURE</span>
-                <span>GARAGE</span>
+              <div className="cw-place-tags" aria-hidden="true">
+                {POIS.filter((p) => p.mapTag !== 'JOB').slice(0, 6).map((p) => (
+                  <span key={p.id} style={{ borderLeft: `3px solid ${p.color}` }}>{p.mapTag} · {p.name.toUpperCase()}</span>
+                ))}
               </div>
             )}
 
@@ -388,8 +380,8 @@ export function CityWorld(props: CityWorldProps) {
               aria-hidden="true"
             >
               {driving
-                ? 'DRIVE · WASD / ARROWS'
-                : 'WASD / ARROWS TO WALK'}
+                ? 'W/S GAS & BRAKE · A/D STEER · SHIFT BOOST'
+                : 'WASD TO WALK · SHIFT TO RUN · E TO INTERACT'}
               <span>DRAG RIGHT SIDE TO LOOK UP, DOWN, LEFT & RIGHT</span>
             </div>
 
