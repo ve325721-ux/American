@@ -36,6 +36,14 @@
 .cw-tap-label { padding-left: 9px; border-left: 1px solid #ffffff44; color: #e5c66f; font-size: 9px; }
 .cw-controls-note { position: absolute; right: 14px; top: 15px; display: grid; gap: 5px; text-align: right; color: white; font-size: 9px; line-height: 1.45; letter-spacing: .08em; text-shadow: 0 1px 5px #17242b; pointer-events: none; }
 .cw-controls-note span { color: #f1d589; }
+.cw-note-touch { display: none; }
+.cw-view-toggle {
+  position: absolute; z-index: 30; right: 13px; top: 118px; display: grid; gap: 2px; justify-items: end;
+  padding: 7px 10px; border: 1px solid #ffffff55; border-radius: 6px; color: #fff7e7;
+  background: rgba(24,35,48,.72); font: 700 10px 'IBM Plex Mono', monospace; letter-spacing: .08em; cursor: pointer;
+}
+.cw-view-toggle small { color: #f1d589; font-size: 8px; font-weight: 500; }
+.cw-view-toggle:hover { background: rgba(36,55,72,.9); }
 .cw-stick {
   display: none; position: absolute; left: 22px; bottom: 24px; width: 92px; height: 92px;
   border: 1px solid #ffffff77; border-radius: 50%; background: rgba(24,35,48,.42);
@@ -53,6 +61,10 @@
 @media (pointer: coarse), (max-width: 700px) {
   .cw-stick { display: grid; }
   .cw-look-pad { display: block; }
+  .cw-note-desktop { display: none; }
+  .cw-note-touch { display: inline; }
+  .cw-view-toggle { top: 116px; right: 9px; padding: 8px 10px; }
+  .cw-view-toggle small { display: none; }
   .cw-interact { bottom: 132px; min-height: 56px; font-size: 10px; }
   .cw-placement-hint { bottom: 133px; width: max-content; max-width: calc(100% - 150px); }
   .cw-controls-note { top: auto; bottom: 23px; right: 110px; font-size: 8px; }

@@ -1,5 +1,6 @@
 import { Component, useCallback, useEffect, useRef, useState } from 'react';
-import type { ErrorInfo, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
+import type { ErrorInfo, PointerEvent as ReactPointerEvent, ReactNode, WheelEvent as ReactWheelEvent } from 'react';
+import { getCameraSettings, updateCameraSettings, useCameraSettings } from '../cameraSettings';
 import { Canvas } from '@react-three/fiber';
 import type { CityWorldProps, WorldInteraction } from './worldTypes';
 import { WorldScene, type InputState } from './WorldScene';
@@ -53,6 +54,7 @@ const emptyInput = (): InputState => ({
   stickY: 0,
   cameraX: 0,
   cameraY: 0,
+  zoom: 0,
 });
 
 export function CityWorld(props: CityWorldProps) {
@@ -73,6 +75,7 @@ export function CityWorld(props: CityWorldProps) {
   } = props;
 
   const input = useRef<InputState>(emptyInput());
+  const cameraSettings = useCameraSettings();
 
   const [nearby, setNearby] = useState<WorldInteraction | null>(null);
 
@@ -84,12 +87,6 @@ export function CityWorld(props: CityWorldProps) {
 
   const [canvasError, setCanvasError] = useState(false);
   const [place, setPlace] = useState({ street: 'E 7th St · 1 Av – Av A', hood: 'EAST VILLAGE' });
-
-  const pointer = useRef<{
-    x: number;
-    y: number;
-    camera: boolean;
-  } | null>(null);
 
   useEffect(() => {
     if (paused) {
@@ -134,6 +131,10 @@ export function CityWorld(props: CityWorldProps) {
         event.preventDefault();
       }
 
+      if (event.code === 'KeyV' && !event.repeat) {
+        updateCameraSettings({ mode: getCameraSettings().mode === 'first' ? 'third' : 'first' });
+      }
+
       if (event.code === 'KeyE' || event.code === 'Enter') {
         if (nearby && !paused) {
           event.preventDefault();
@@ -152,7 +153,7 @@ export function CityWorld(props: CityWorldProps) {
     };
 
     const blur = () => {
-      input.current = emptyInput();
+      Object.assign(input.current, emptyInput());
       setJoystick({ x: 0, y: 0, active: false });
     };
 
@@ -233,40 +234,62 @@ export function CityWorld(props: CityWorldProps) {
     });
   };
 
+  // Every active pointer is tracked separately so a thumb on the joystick
+  // and a thumb swiping the camera never interfere with each other.
+  const lookPointers = useRef(new Map<number, { x: number; y: number; touch: boolean }>());
+
   const pointerDown = (
     event: ReactPointerEvent<HTMLDivElement>,
   ) => {
+    // Joystick, interact prompt and HUD buttons handle their own input.
+    if ((event.target as HTMLElement).closest('button')) return;
     const rect = event.currentTarget.getBoundingClientRect();
+    const touch = event.pointerType !== 'mouse';
+    // Mouse: hold the right button (or drag with the left) anywhere.
+    // Touch: swipe anywhere on the right side of the screen.
+    const look = touch
+      ? event.clientX > rect.left + rect.width * 0.42
+      : event.button === 2 || event.button === 0;
+    if (!look) return;
+    lookPointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY, touch });
+  };
 
-    pointer.current = {
-      x: event.clientX,
-      y: event.clientY,
-      camera:
-        event.clientX > rect.left + rect.width * 0.42,
+  useEffect(() => {
+    const move = (event: PointerEvent) => {
+      const tracked = lookPointers.current.get(event.pointerId);
+      if (!tracked) return;
+      if (!tracked.touch && event.buttons === 0) {
+        lookPointers.current.delete(event.pointerId);
+        return;
+      }
+      const deltaX = event.clientX - tracked.x;
+      const deltaY = event.clientY - tracked.y;
+      tracked.x = event.clientX;
+      tracked.y = event.clientY;
+      const { sensitivity, invertY } = getCameraSettings();
+      const k = (tracked.touch ? 0.0062 : 0.0042) * sensitivity;
+      // Move/swipe right → look right. Move/swipe up → look up.
+      input.current.cameraX -= deltaX * k;
+      input.current.cameraY -= deltaY * k * (invertY ? -1 : 1);
     };
-  };
+    const end = (event: PointerEvent) => {
+      lookPointers.current.delete(event.pointerId);
+    };
+    const clear = () => lookPointers.current.clear();
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+    window.addEventListener('blur', clear);
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+      window.removeEventListener('blur', clear);
+    };
+  }, []);
 
-  // Drag on the right side to rotate the camera horizontally
-  // and vertically.
-  const pointerMove = (
-    event: ReactPointerEvent<HTMLDivElement>,
-  ) => {
-    if (!pointer.current?.camera || event.buttons === 0) {
-      return;
-    }
-
-    const deltaX = event.clientX - pointer.current.x;
-    const deltaY = event.clientY - pointer.current.y;
-
-    input.current.cameraX += deltaX * 0.008;
-    input.current.cameraY += deltaY * 0.008;
-
-    pointer.current.x = event.clientX;
-    pointer.current.y = event.clientY;
-  };
-
-  const pointerEnd = () => {
-    pointer.current = null;
+  const wheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    input.current.zoom += Math.sign(event.deltaY) * 0.8;
   };
 
   const poi = POIS.find((p) => p.id === nearby);
@@ -304,14 +327,13 @@ export function CityWorld(props: CityWorldProps) {
           <div
             className="cw-canvas-wrap"
             onPointerDown={pointerDown}
-            onPointerMove={pointerMove}
-            onPointerUp={pointerEnd}
-            onPointerCancel={pointerEnd}
+            onContextMenu={(event) => event.preventDefault()}
+            onWheel={wheel}
             data-testid="world-canvas"
           >
             <Canvas
               shadows
-              camera={{ position: [0, 5, 9], fov: 55, near: 0.3, far: 2200 }}
+              camera={{ position: [0, 5, 9], fov: 60, near: 0.1, far: 2200 }}
               dpr={[1, 1.35]}
               gl={{
                 antialias: true,
@@ -328,6 +350,7 @@ export function CityWorld(props: CityWorldProps) {
               <WorldScene
                 {...props}
                 input={input}
+                cameraMode={cameraSettings.mode}
                 onNearbyChange={setNearby}
                 onPlaceChange={(next) => { setPlace(next); props.onPlaceChange?.(next); }}
               />
@@ -382,8 +405,19 @@ export function CityWorld(props: CityWorldProps) {
               {driving
                 ? 'W/S GAS & BRAKE · A/D STEER · SHIFT BOOST'
                 : 'WASD TO WALK · SHIFT TO RUN · E TO INTERACT'}
-              <span>DRAG RIGHT SIDE TO LOOK UP, DOWN, LEFT & RIGHT</span>
+              <span className="cw-note-desktop">HOLD RIGHT MOUSE & MOVE TO LOOK · WHEEL ZOOM · V VIEW</span>
+              <span className="cw-note-touch">SWIPE RIGHT SIDE TO LOOK AROUND</span>
             </div>
+
+            <button
+              className="cw-view-toggle"
+              onClick={() => updateCameraSettings({ mode: cameraSettings.mode === 'first' ? 'third' : 'first' })}
+              aria-label={`Switch to ${cameraSettings.mode === 'first' ? 'third' : 'first'}-person view`}
+              data-testid="button-camera-mode"
+            >
+              {cameraSettings.mode === 'first' ? '1ST PERSON' : '3RD PERSON'}
+              <small>V · SWITCH VIEW</small>
+            </button>
 
             <button
               className="cw-stick"

@@ -63,10 +63,12 @@
 .meter {height:5px;background:#ddd3c2;border-radius:9px;overflow:hidden}
 .meter i {display:block;height:100%;border-radius:9px;background:#307265;transition:width .35s}
 .meter.low i {background:#c94d2f}
-.phone-tabs {display:grid;grid-template-columns:repeat(6,1fr);padding:9px 9px 0;gap:3px}
+.phone-tabs {display:grid;grid-template-columns:repeat(7,1fr);padding:9px 9px 0;gap:3px}
 .phone-tab {border:0;background:transparent;color:#717873;min-height:53px;border-radius:7px 7px 0 0;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font:600 9px 'IBM Plex Mono',monospace;text-transform:uppercase}
 .phone-tab svg {width:17px;height:17px}
+.phone-tab {min-width:0;padding:0 1px;overflow:hidden}
 .phone-tab.active {background:#182330;color:#f1c751}
+.settings-range {width:100%;accent-color:#f1c751;margin:4px 0 6px;height:28px}
 .phone-content {background:#182330;color:#f5f0e4;margin:0 9px;border-radius:8px;flex:1;overflow:auto;padding:14px 13px 18px}
 .content-kicker {font:500 10px 'IBM Plex Mono',monospace;color:#c5b995;letter-spacing:.08em;margin-bottom:12px}
 .action-card {padding:12px 12px;background:#202e3b;border:1px solid #34414b;border-radius:7px;margin-bottom:9px}
