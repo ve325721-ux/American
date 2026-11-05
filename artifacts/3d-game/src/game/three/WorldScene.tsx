@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
+import * as THREE from 'three';
 import type { MutableRefObject } from 'react';
 import type {
   CityWorldProps,
@@ -7,12 +8,28 @@ import type {
   WorldInteraction,
   WorldPose,
 } from './worldTypes';
+import { NycCity, addCar } from './nyc/NycCity';
+import { GeoBuilder } from './nyc/geometry';
+import {
+  BUILDING_COLLIDERS,
+  HOME_DOOR_POSE,
+  OWNED_PARKING,
+  POIS,
+  TEST_CAR_PARKING,
+  blocked,
+  describePlace,
+} from './nyc/layout';
+/* eslint-disable @typescript-eslint/no-explicit-any */
+type ThreeDirectionalLight = any;
+type ThreeGroup = any;
 
-interface InputState {
+
+export interface InputState {
   forward: boolean;
   back: boolean;
   left: boolean;
   right: boolean;
+  sprint: boolean;
   stickX: number;
   stickY: number;
   cameraX: number;
@@ -31,14 +48,6 @@ interface BoxCollider {
   d: number;
 }
 
-const STREET_COLLIDERS: BoxCollider[] = [
-  { x: -8, z: -9, w: 7, d: 5 },
-  { x: 0, z: -9, w: 7, d: 5 },
-  { x: 8, z: -9, w: 7, d: 5 },
-  { x: -15, z: 7, w: 6, d: 7 },
-  { x: 14, z: 7, w: 7, d: 8 },
-];
-
 const INTERIOR_COLLIDERS: BoxCollider[] = [
   { x: 0, z: -5.05, w: 10.2, d: 0.35 },
   { x: -5.05, z: 0, w: 0.35, d: 10.2 },
@@ -46,6 +55,14 @@ const INTERIOR_COLLIDERS: BoxCollider[] = [
   { x: -3.7, z: 5.05, w: 2.6, d: 0.35 },
   { x: 3.7, z: 5.05, w: 2.6, d: 0.35 },
 ];
+
+/** Paint + body type for cars the player can drive. */
+export const DRIVABLE: Record<string, { kind: number; color: string; label: string; top: number; accel: number }> = {
+  'test-car': { kind: 0, color: '#c94d2f', label: 'loaner sedan', top: 15, accel: 7 },
+  'used-sedan': { kind: 0, color: '#5c6770', label: 'used sedan', top: 14, accel: 6 },
+  'electric-hatch': { kind: 0, color: '#e8e8e6', label: 'electric hatch', top: 17, accel: 10 },
+  'luxury-suv': { kind: 3, color: '#1c1c1e', label: 'luxury SUV', top: 18, accel: 9 },
+};
 
 const clamp = (value: number, low: number, high: number) =>
   Math.max(low, Math.min(high, value));
@@ -77,252 +94,6 @@ function Block({
   );
 }
 
-function Sign({
-  x,
-  z,
-  color,
-  title,
-  detail,
-}: {
-  x: number;
-  z: number;
-  color: string;
-  title: string;
-  detail: string;
-}) {
-  return (
-    <group position={[x, 3.9, z]}>
-      <Block position={[0, 0, 0]} size={[3.5, 0.8, 0.16]} color={color} />
-      <Block
-        position={[0, -0.49, 0]}
-        size={[0.1, 0.2, 0.16]}
-        color="#6d6659"
-      />
-      <Block
-        position={[-0.8, 0, 0.1]}
-        size={[0.12, 0.5, 0.03]}
-        color="#f5ead5"
-      />
-      <Block
-        position={[0.1, 0, 0.1]}
-        size={[0.12, 0.5, 0.03]}
-        color="#f5ead5"
-      />
-      <Block
-        position={[1, 0, 0.1]}
-        size={[0.12, 0.5, 0.03]}
-        color="#f5ead5"
-      />
-      <mesh position={[0, -0.25, 0.12]}>
-        <boxGeometry args={[2.8, 0.05, 0.02]} />
-        <meshStandardMaterial color={detail} />
-      </mesh>
-      <group userData={{ title }} />
-    </group>
-  );
-}
-
-function Building({
-  x,
-  z,
-  color,
-  floors = 2,
-  shop = false,
-  name,
-  marker,
-}: {
-  x: number;
-  z: number;
-  color: string;
-  floors?: number;
-  shop?: boolean;
-  name: string;
-  marker: string;
-}) {
-  const height = floors * 2.35;
-
-  return (
-    <group position={[x, 0, z]}>
-      <Block
-        position={[0, height / 2, 0]}
-        size={[7, height, 5]}
-        color={color}
-      />
-      <Block
-        position={[0, height + 0.13, 0]}
-        size={[7.35, 0.32, 5.3]}
-        color={shop ? '#3e4645' : '#736c61'}
-      />
-
-      {Array.from({ length: floors }, (_, floor) =>
-        [-2.1, 0, 2.1].map((wx, index) => (
-          <group
-            key={`${floor}-${index}`}
-            position={[wx, 1.25 + floor * 2.35, 2.53]}
-          >
-            <Block
-              position={[0, 0, 0]}
-              size={[0.94, 1.22, 0.08]}
-              color={shop && floor === 0 ? '#304d52' : '#b9d6cd'}
-            />
-            <Block
-              position={[0, 0, 0.05]}
-              size={[0.09, 1.25, 0.07]}
-              color="#eee2c9"
-            />
-            <Block
-              position={[0, 0, 0.06]}
-              size={[0.94, 0.08, 0.07]}
-              color="#eee2c9"
-            />
-            {floor > 0 && (
-              <Block
-                position={[0, -0.72, 0.12]}
-                size={[1.16, 0.1, 0.22]}
-                color="#8c5441"
-              />
-            )}
-          </group>
-        )),
-      )}
-
-      <Block
-        position={[0, 1.05, 2.57]}
-        size={[1.05, 2.05, 0.15]}
-        color={shop ? '#25494b' : '#76533e'}
-      />
-      <Block
-        position={[0, 2.18, 2.65]}
-        size={[1.55, 0.2, 0.22]}
-        color="#e2c77c"
-      />
-      <Block
-        position={[0, height + 0.48, 0]}
-        size={[2.1, 0.38, 0.18]}
-        color={shop ? '#c94d2f' : '#31484b'}
-      />
-
-      <Sign
-        x={0}
-        z={2.73}
-        color={shop ? '#ae4e36' : '#344c4b'}
-        title={name}
-        detail={marker}
-      />
-    </group>
-  );
-}
-
-function Streetlight({
-  position,
-}: {
-  position: [number, number, number];
-}) {
-  return (
-    <group position={position}>
-      <mesh position={[0, 2, 0]}>
-        <cylinderGeometry args={[0.08, 0.13, 4, 5]} />
-        <meshStandardMaterial color="#4a4c45" />
-      </mesh>
-      <Block
-        position={[0.48, 3.75, 0]}
-        size={[1.05, 0.12, 0.12]}
-        color="#4a4c45"
-      />
-      <Block
-        position={[0.92, 3.55, 0]}
-        size={[0.38, 0.35, 0.32]}
-        color="#f2ca72"
-      />
-    </group>
-  );
-}
-
-function Tree({
-  position,
-  scale = 1,
-}: {
-  position: [number, number, number];
-  scale?: number;
-}) {
-  return (
-    <group position={position} scale={scale}>
-      <mesh position={[0, 0.8, 0]}>
-        <cylinderGeometry args={[0.14, 0.22, 1.6, 5]} />
-        <meshStandardMaterial color="#725643" />
-      </mesh>
-      <mesh position={[0, 2, 0]}>
-        <icosahedronGeometry args={[1.05, 0]} />
-        <meshStandardMaterial color="#66836b" flatShading />
-      </mesh>
-      <mesh position={[-0.34, 2.38, 0.16]}>
-        <icosahedronGeometry args={[0.64, 0]} />
-        <meshStandardMaterial color="#81946c" flatShading />
-      </mesh>
-    </group>
-  );
-}
-
-type GroupHandle = {
-  position: { set: (x: number, y: number, z: number) => void };
-  rotation: { y: number };
-};
-
-function Car({
-  position,
-  rotation = 0,
-  onClick,
-  groupRef,
-}: {
-  position: [number, number, number];
-  rotation?: number;
-  onClick?: () => void;
-  groupRef?: (group: GroupHandle | null) => void;
-}) {
-  return (
-    <group
-      ref={groupRef}
-      position={position}
-      rotation={[0, rotation, 0]}
-      onClick={onClick}
-    >
-      <Block
-        position={[0, 0.58, 0]}
-        size={[2.05, 0.62, 3.65]}
-        color="#c94d2f"
-      />
-      <Block
-        position={[0, 1.07, -0.15]}
-        size={[1.54, 0.62, 1.82]}
-        color="#e3d9c4"
-      />
-      <Block
-        position={[0, 1.1, -0.15]}
-        size={[1.3, 0.45, 1.63]}
-        color="#7caaa7"
-      />
-
-      {[-1, 1].map((side) =>
-        [-1.12, 1.12].map((front) => (
-          <mesh
-            key={`${side}-${front}`}
-            position={[side * 0.96, 0.42, front]}
-            rotation={[0, 0, Math.PI / 2]}
-          >
-            <cylinderGeometry args={[0.35, 0.35, 0.16, 8]} />
-            <meshStandardMaterial color="#393d3b" />
-          </mesh>
-        )),
-      )}
-
-      <Block
-        position={[0, 0.43, 1.83]}
-        size={[1.45, 0.24, 0.08]}
-        color="#f0d389"
-      />
-    </group>
-  );
-}
 
 function FurnitureModel({
   itemId,
@@ -434,324 +205,122 @@ function ApartmentInterior({
   pendingFurnitureId,
   onPlaceFurniture,
   onInspectFurniture,
-}: Pick<
-  SceneProps,
-  | 'placements'
-  | 'pendingFurnitureId'
-  | 'onPlaceFurniture'
-  | 'onInspectFurniture'
->) {
-  const place = (event: {
-    point: { x: number; z: number };
-    stopPropagation: () => void;
-  }) => {
+}: Pick<SceneProps, 'placements' | 'pendingFurnitureId' | 'onPlaceFurniture' | 'onInspectFurniture'>) {
+  const place = (event: { point: { x: number; z: number }; stopPropagation: () => void }) => {
     if (!pendingFurnitureId) return;
-
     event.stopPropagation();
-
-    onPlaceFurniture(
-      pendingFurnitureId,
-      clamp(event.point.x, -4.1, 4.1),
-      clamp(event.point.z, -4.1, 4.1),
-      0,
-    );
+    onPlaceFurniture(pendingFurnitureId, clamp(event.point.x, -4.1, 4.1), clamp(event.point.z, -4.1, 4.1), 0);
   };
-
   const furniture = [
     { id: 'sofa', x: -2.4, z: 1.6, rot: 0 },
-    { id: 'television', x: -2.4, z: -1.55, rot: 0 },
     { id: 'bed', x: 2.8, z: -2.4, rot: Math.PI / 2 },
     { id: 'plant', x: 4, z: 1.8, rot: 0 },
-    ...placements.map((item: FurniturePlacement) => ({
-      id: item.itemId,
-      x: item.x,
-      z: item.z,
-      rot: item.rotation,
-    })),
+    ...placements.map((item: FurniturePlacement) => ({ id: item.itemId, x: item.x, z: item.z, rot: item.rotation })),
   ];
-
   return (
     <group>
-      <Block
-        position={[0, -0.12, 0]}
-        size={[10, 0.2, 10]}
-        color="#d6c7ad"
-        onClick={place}
-      />
-      <Block
-        position={[0, 3, -5]}
-        size={[10, 6, 0.3]}
-        color="#e9ddc8"
-      />
-      <Block
-        position={[-5, 3, 0]}
-        size={[0.3, 6, 10]}
-        color="#e6d9c2"
-      />
-      <Block
-        position={[5, 3, 0]}
-        size={[0.3, 6, 10]}
-        color="#e6d9c2"
-      />
-      <Block
-        position={[-3.7, 3, 5]}
-        size={[2.6, 6, 0.3]}
-        color="#e6d9c2"
-      />
-      <Block
-        position={[3.7, 3, 5]}
-        size={[2.6, 6, 0.3]}
-        color="#e6d9c2"
-      />
-      <Block
-        position={[0, 5.95, 0]}
-        size={[10, 0.18, 10]}
-        color="#d8c9b1"
-      />
-      <Block
-        position={[0, 0.02, 0]}
-        size={[0.3, 0.04, 9.7]}
-        color="#c6b397"
-      />
-      <Block
-        position={[0, 2.2, -4.78]}
-        size={[2.2, 1.5, 0.12]}
-        color="#8caa9d"
-      />
-      <Block
-        position={[0, 2.2, -4.69]}
-        size={[0.12, 1.5, 0.08]}
-        color="#f5ead9"
-      />
-      <Block
-        position={[0, 2.2, -4.68]}
-        size={[2.2, 0.12, 0.08]}
-        color="#f5ead9"
-      />
-      <Block
-        position={[0, 2.8, 4.85]}
-        size={[1.4, 2.7, 0.15]}
-        color="#79533f"
-      />
-      <Block
-        position={[-2.4, 0.84, -1.55]}
-        size={[1.75, 1.05, 0.22]}
-        color="#333b3e"
-        onClick={(event: { stopPropagation: () => void }) => {
-          event.stopPropagation();
-          onInspectFurniture('television');
-        }}
-      />
-
+      {/* hardwood floor */}
+      <Block position={[0, -0.12, 0]} size={[10, 0.2, 10]} color="#a7774f" onClick={place} />
+      {Array.from({ length: 12 }, (_, i) => (
+        <Block key={i} position={[-4.6 + i * 0.84, 0.0, 0]} size={[0.02, 0.02, 9.9]} color="#8a5f3e" />
+      ))}
+      {/* exposed brick wall + painted walls */}
+      <Block position={[0, 3, -5]} size={[10, 6, 0.3]} color="#9a4f3a" />
+      <Block position={[-5, 3, 0]} size={[0.3, 6, 10]} color="#ece6da" />
+      <Block position={[5, 3, 0]} size={[0.3, 6, 10]} color="#ece6da" />
+      <Block position={[-3.7, 3, 5]} size={[2.6, 6, 0.3]} color="#ece6da" />
+      <Block position={[3.7, 3, 5]} size={[2.6, 6, 0.3]} color="#ece6da" />
+      <Block position={[0, 5.95, 0]} size={[10, 0.18, 10]} color="#f2eee6" />
+      {/* tall double-hung windows onto E 7th St, with radiator */}
+      {[-2.4, 2.4].map((x) => (
+        <group key={x}>
+          <Block position={[x, 2.6, -4.82]} size={[1.5, 2.6, 0.08]} color="#9cc0d6" />
+          <Block position={[x, 2.6, -4.76]} size={[1.6, 0.1, 0.06]} color="#f5f0e4" />
+          <Block position={[x, 1.2, -4.7]} size={[1.8, 0.12, 0.3]} color="#f5f0e4" />
+          <Block position={[x, 0.55, -4.6]} size={[1.3, 0.8, 0.25]} color="#d9d4c6" />
+        </group>
+      ))}
+      {/* galley kitchen along the east wall */}
+      <Block position={[4.45, 0.45, -1.2]} size={[0.9, 0.9, 3.4]} color="#e8e4da" />
+      <Block position={[4.45, 0.93, -1.2]} size={[0.95, 0.06, 3.45]} color="#3a3a3a" />
+      <Block position={[4.5, 0.95, -2.4]} size={[0.6, 0.04, 0.6]} color="#1a1a1a" />
+      <Block position={[4.5, 1.0, 0.95]} size={[0.8, 2, 0.8]} color="#d8dadb" />
+      <Block position={[4.45, 2.6, -1.2]} size={[0.6, 0.8, 3.4]} color="#e8e4da" />
+      {/* front door */}
+      <Block position={[0, 1.3, 4.85]} size={[1.4, 2.6, 0.15]} color="#5b3a2a" />
+      <Block position={[-2.4, 0.84, -1.55]} size={[1.75, 1.05, 0.22]} color="#333b3e" onClick={(event: { stopPropagation: () => void }) => { event.stopPropagation(); onInspectFurniture('television'); }} />
       {furniture.map((item, index) => (
-        <FurnitureModel
-          key={`${item.id}-${index}`}
-          itemId={item.id}
-          position={[item.x, 0, item.z]}
-          rotation={item.rot}
-          onClick={() => onInspectFurniture(item.id)}
-        />
+        <FurnitureModel key={`${item.id}-${index}`} itemId={item.id} position={[item.x, 0, item.z]} rotation={item.rot} onClick={() => onInspectFurniture(item.id)} />
       ))}
-
-      <Block
-        position={[-2.25, 0.36, -3.1]}
-        size={[0.95, 0.72, 0.72]}
-        color="#aa7750"
-        onClick={(event: { stopPropagation: () => void }) => {
-          event.stopPropagation();
-          onInspectFurniture('coffee-table');
-        }}
-      />
-      <Block
-        position={[2.8, 0.18, -2.4]}
-        size={[2.7, 0.35, 1.3]}
-        color="#775340"
-      />
+      <Block position={[-2.25, 0.36, -3.1]} size={[0.95, 0.72, 0.72]} color="#aa7750" onClick={(event: { stopPropagation: () => void }) => { event.stopPropagation(); onInspectFurniture('coffee-table'); }} />
+      <pointLight position={[0, 5, 0]} intensity={14} distance={14} color="#ffe6c4" />
     </group>
   );
 }
 
-function City({
-  driving,
-  onToggleDrive,
-}: {
-  onInteract: SceneProps['onInteract'];
-  driving: boolean;
-  onToggleDrive: () => void;
-}) {
-  return (
-    <group>
-      <Block
-        position={[0, -0.22, 0]}
-        size={[70, 0.4, 60]}
-        color="#a9b8a2"
-      />
-      <Block
-        position={[0, -0.04, 0]}
-        size={[70, 0.12, 9]}
-        color="#626b68"
-      />
-
-      {Array.from({ length: 13 }, (_, i) => (
-        <Block
-          key={i}
-          position={[-30 + i * 5, 0.03, 0]}
-          size={[2.2, 0.02, 0.12]}
-          color="#e3d09b"
-        />
-      ))}
-
-      <Block
-        position={[0, 0.01, 6.3]}
-        size={[70, 0.12, 2.4]}
-        color="#d5c8ad"
-      />
-      <Block
-        position={[0, 0.01, -6.3]}
-        size={[70, 0.12, 2.4]}
-        color="#d5c8ad"
-      />
-
-      <Building
-        x={-8}
-        z={-10}
-        color="#b7785e"
-        name="WALK-UP"
-        marker="HOME"
-      />
-      <Building
-        x={0}
-        z={-10}
-        color="#c7b08a"
-        shop
-        name="FURNITURE"
-        marker="SHOP"
-      />
-      <Building
-        x={8}
-        z={-10}
-        color="#7e9790"
-        shop
-        name="MOTOR ROW"
-        marker="CARS"
-      />
-      <Building
-        x={-17}
-        z={8}
-        color="#bd9d76"
-        floors={3}
-        name="CORNER DELI"
-        marker="OPEN"
-      />
-      <Building
-        x={17}
-        z={8}
-        color="#ad7060"
-        floors={3}
-        name="BROWNSTONE"
-        marker="APT"
-      />
-
-      {[-24, -12, 0, 12, 24].map((x) => (
-        <Streetlight key={x} position={[x, 0, -7.4]} />
-      ))}
-
-      {[-21, -6, 9, 22].map((x) => (
-        <Tree
-          key={x}
-          position={[x, 0, 7.2]}
-          scale={x % 2 ? 0.82 : 1}
-        />
-      ))}
-
-      <group position={[-8, 0, -6.8]}>
-        <Block
-          position={[0, 1.1, 0]}
-          size={[1.3, 2.2, 0.18]}
-          color="#704632"
-        />
-        <Block
-          position={[0, 2.35, 0.05]}
-          size={[1.65, 0.18, 0.2]}
-          color="#d4b96d"
-        />
-      </group>
-
-      {!driving && (
-        <Car
-          position={[10, 0, -5.4]}
-          onClick={() => {
-            if (!driving) onToggleDrive();
-          }}
-        />
-      )}
-    </group>
-  );
-}
-
-function Avatar({
-  character,
-  walking,
-  driving,
-}: {
-  character: string;
-  walking: boolean;
-  driving: boolean;
-}) {
-  const bob = useRef<{ position: { y: number } } | null>(null);
-
-  const outfit =
-    character.toLowerCase() === 'creative'
-      ? '#785e91'
-      : character.toLowerCase() === 'street'
-        ? '#4b7183'
-        : character.toLowerCase() === 'polished'
-          ? '#a78b51'
-          : '#c94d2f';
+function Avatar({ character, walking, running, driving }: { character: string; walking: boolean; running: boolean; driving: boolean }) {
+  const root = useRef<ThreeGroup | null>(null);
+  const limbs = useRef<(ThreeGroup | null)[]>([]);
+  const look = character.toLowerCase();
+  const outfit = look === 'creative' ? '#785e91' : look === 'street' ? '#4b7183' : look === 'polished' ? '#2f3a4a' : '#c94d2f';
+  const pants = look === 'polished' ? '#22262c' : look === 'street' ? '#2b2f36' : '#34465c';
+  const skin = '#b98463';
 
   useFrame(({ clock }) => {
-    if (bob.current) {
-      bob.current.position.y = walking
-        ? Math.abs(Math.sin(clock.elapsedTime * 9)) * 0.07
-        : 0;
-    }
+    const t = clock.elapsedTime * (running ? 13 : 8.5);
+    const swing = walking ? Math.sin(t) * (running ? 0.9 : 0.55) : 0;
+    const [armL, armR, legL, legR] = limbs.current;
+    if (armL) armL.rotation.x = swing;
+    if (armR) armR.rotation.x = -swing;
+    if (legL) legL.rotation.x = -swing;
+    if (legR) legR.rotation.x = swing;
+    if (root.current) root.current.position.y = walking ? Math.abs(Math.sin(t)) * (running ? 0.09 : 0.05) : 0;
   });
 
   if (driving) return null;
-
   return (
-    <group ref={bob}>
-      <mesh position={[0, 1.48, 0]}>
-        <capsuleGeometry args={[0.3, 0.72, 3, 6]} />
-        <meshStandardMaterial color={outfit} flatShading />
+    <group ref={root}>
+      {/* torso + jacket */}
+      <mesh position={[0, 1.32, 0]} castShadow>
+        <boxGeometry args={[0.58, 0.72, 0.32]} />
+        <meshStandardMaterial color={outfit} roughness={0.9} />
       </mesh>
-
-      <mesh position={[0, 2.16, 0]}>
-        <dodecahedronGeometry args={[0.34, 0]} />
-        <meshStandardMaterial color="#c98f69" flatShading />
+      <mesh position={[0, 1.02, 0]} castShadow>
+        <boxGeometry args={[0.52, 0.16, 0.3]} />
+        <meshStandardMaterial color="#1f1f22" />
       </mesh>
-
-      <mesh position={[0, 2.43, -0.02]}>
-        <icosahedronGeometry args={[0.32, 0]} />
-        <meshStandardMaterial color="#493e36" flatShading />
+      {/* head */}
+      <mesh position={[0, 1.88, 0]} castShadow>
+        <boxGeometry args={[0.32, 0.36, 0.32]} />
+        <meshStandardMaterial color={skin} />
       </mesh>
-
-      {[-0.43, 0.43].map((x) => (
-        <mesh key={x} position={[x, 1.45, 0]}>
-          <capsuleGeometry args={[0.12, 0.54, 2, 5]} />
-          <meshStandardMaterial color="#c98f69" />
-        </mesh>
-      ))}
-
-      {[-0.17, 0.17].map((x) => (
-        <group key={x}>
-          <mesh position={[x, 0.53, 0]}>
-            <capsuleGeometry args={[0.14, 0.6, 2, 5]} />
-            <meshStandardMaterial color="#343f49" />
+      <mesh position={[0, 2.08, 0.02]}>
+        <boxGeometry args={[0.34, 0.1, 0.34]} />
+        <meshStandardMaterial color="#2a211b" />
+      </mesh>
+      {/* arms (pivot at shoulder) */}
+      {[-0.37, 0.37].map((x, i) => (
+        <group key={x} position={[x, 1.64, 0]} ref={(g: ThreeGroup | null) => { limbs.current[i] = g; }}>
+          <mesh position={[0, -0.32, 0]} castShadow>
+            <boxGeometry args={[0.16, 0.62, 0.18]} />
+            <meshStandardMaterial color={outfit} />
           </mesh>
-          <mesh position={[x, 0.15, -0.08]}>
-            <boxGeometry args={[0.3, 0.18, 0.52]} />
-            <meshStandardMaterial color="#665141" />
+          <mesh position={[0, -0.68, 0]}>
+            <boxGeometry args={[0.13, 0.12, 0.14]} />
+            <meshStandardMaterial color={skin} />
+          </mesh>
+        </group>
+      ))}
+      {/* legs (pivot at hip) */}
+      {[-0.14, 0.14].map((x, i) => (
+        <group key={x} position={[x, 0.95, 0]} ref={(g: ThreeGroup | null) => { limbs.current[i + 2] = g; }}>
+          <mesh position={[0, -0.44, 0]} castShadow>
+            <boxGeometry args={[0.2, 0.82, 0.22]} />
+            <meshStandardMaterial color={pants} />
+          </mesh>
+          <mesh position={[0, -0.88, -0.06]}>
+            <boxGeometry args={[0.22, 0.12, 0.36]} />
+            <meshStandardMaterial color="#efece4" />
           </mesh>
         </group>
       ))}
@@ -759,279 +328,285 @@ function Avatar({
   );
 }
 
+function PlayerCar({ vehicleId, groupRef }: { vehicleId: string; groupRef: MutableRefObject<ThreeGroup | null> }) {
+  const spec = DRIVABLE[vehicleId] ?? DRIVABLE['test-car'];
+  const geo = useMemo(() => {
+    const g = new GeoBuilder();
+    addCar(g, 0, 0, 0, spec.kind, 0, spec.color);
+    return g.build();
+  }, [spec.kind, spec.color]);
+  return (
+    <group ref={groupRef}>
+      <mesh geometry={geo} castShadow>
+        <meshStandardMaterial vertexColors roughness={0.3} metalness={0.4} />
+      </mesh>
+    </group>
+  );
+}
+
+/** Distant Midtown & Lower Manhattan skyline beyond the fog. */
+function Skyline() {
+  return (
+    <group>
+      {/* Empire State Building — north-west, up the grid */}
+      <group position={[-380, 0, -1450]}>
+        {[[60, 140, 50], [44, 230, 36], [30, 300, 26], [18, 345, 16], [8, 370, 8]].map(([w, h, d], i) => (
+          <mesh key={i} position={[0, h / 2, 0]}><boxGeometry args={[w, h, d]} /><meshBasicMaterial color="#8d9aa6" fog={false} /></mesh>
+        ))}
+        <mesh position={[0, 400, 0]}><cylinderGeometry args={[0.6, 2, 60, 6]} /><meshBasicMaterial color="#8d9aa6" fog={false} /></mesh>
+      </group>
+      {/* Chrysler Building */}
+      <group position={[-200, 0, -1250]}>
+        <mesh position={[0, 120, 0]}><boxGeometry args={[34, 240, 34]} /><meshBasicMaterial color="#95a1ac" fog={false} /></mesh>
+        <mesh position={[0, 265, 0]}><coneGeometry args={[16, 70, 8]} /><meshBasicMaterial color="#a7b2bb" fog={false} /></mesh>
+      </group>
+      {/* One World Trade Center — south-west */}
+      <group position={[-520, 0, 1450]}>
+        <mesh position={[0, 200, 0]} rotation={[0, Math.PI / 4, 0]}><cylinderGeometry args={[20, 42, 400, 4]} /><meshBasicMaterial color="#9aa8b4" fog={false} /></mesh>
+        <mesh position={[0, 440, 0]}><cylinderGeometry args={[0.6, 1.4, 90, 6]} /><meshBasicMaterial color="#9aa8b4" fog={false} /></mesh>
+      </group>
+      {/* generic Midtown mass */}
+      {Array.from({ length: 22 }, (_, i) => {
+        const x = -900 + i * 60 + ((i * 37) % 23);
+        const h = 80 + ((i * 53) % 140);
+        return <mesh key={i} position={[x, h / 2, -1320 - ((i * 29) % 90)]}><boxGeometry args={[40, h, 40]} /><meshBasicMaterial color="#a3aeb8" fog={false} /></mesh>;
+      })}
+    </group>
+  );
+}
+
 export function WorldScene(props: SceneProps) {
   const {
-    location,
-    initialPose,
-    input,
-    onPoseChange,
-    onInteract,
-    onToggleDrive,
-    onPlaceFurniture,
-    onInspectFurniture,
-    placements,
-    pendingFurnitureId,
-    character,
-    driving,
-    paused,
-    onNearbyChange,
+    location, initialPose, input, onPoseChange, onToggleDrive, onPlaceFurniture, onInspectFurniture,
+    placements, pendingFurnitureId, character, driving, paused, onNearbyChange, vehicleId, onPlaceChange,
   } = props;
 
-  const actor = useRef<{
-    position: { set: (x: number, y: number, z: number) => void };
-    rotation: { y: number };
-  } | null>(null);
-
-  const vehicle = useRef<GroupHandle | null>(null);
-  const pose = useRef<WorldPose>({ ...initialPose });
+  const actor = useRef<ThreeGroup | null>(null);
+  const vehicle = useRef<ThreeGroup | null>(null);
+  const sun = useRef<ThreeDirectionalLight | null>(null);
+  const carId = vehicleId && DRIVABLE[vehicleId] ? vehicleId : 'test-car';
+  const carSpot = carId === 'test-car' ? TEST_CAR_PARKING : OWNED_PARKING;
+  const carPose = useRef({ ...carSpot, speed: 0 });
+  const pose = useRef<WorldPose>(
+    location === 'street' && blocked(initialPose.x, initialPose.z, 0.35) ? { ...HOME_DOOR_POSE } : { ...initialPose },
+  );
   const previousLocation = useRef(location);
   const yaw = useRef(initialPose.yaw || 0);
-
-  // Camera rotation is independent of the character's movement direction.
-  const cameraYaw = useRef(0);
+  const cameraYaw = useRef(pose.current.yaw || 0);
   const cameraPitch = useRef(0);
-
+  const lastManualLook = useRef(-10);
   const lastPoseNotify = useRef(0);
+  const lastPlace = useRef('');
   const lastNearbyNotify = useRef<WorldInteraction | null>(null);
   const wasDriving = useRef(driving);
-  const [walking, setWalking] = useState(false);
+  const [gait, setGait] = useState<'idle' | 'walk' | 'run'>('idle');
 
-  const collisions =
-    location === 'street' ? STREET_COLLIDERS : INTERIOR_COLLIDERS;
+  // Re-park the car when the vehicle you own changes.
+  useEffect(() => {
+    if (!driving) carPose.current = { ...carSpot, speed: 0 };
+  }, [carId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (previousLocation.current === location) return;
-
     previousLocation.current = location;
-
-    pose.current =
-      location === 'apartment'
-        ? { x: 0, z: 0, yaw: 0 }
-        : { x: -8, z: -6.1, yaw: Math.PI };
-
+    pose.current = location === 'apartment' ? { x: 0, z: 3.2, yaw: 0 } : { ...HOME_DOOR_POSE };
     yaw.current = pose.current.yaw;
-    cameraYaw.current = 0;
+    cameraYaw.current = pose.current.yaw;
     cameraPitch.current = 0;
   }, [location]);
 
   useFrame((state, delta) => {
     const dt = Math.min(delta, 0.05);
     const controls = input.current;
+    const street = location === 'street';
 
-    // Horizontal and vertical camera input from touch dragging.
+    if (controls.cameraX || controls.cameraY) lastManualLook.current = state.clock.elapsedTime;
     cameraYaw.current += controls.cameraX;
-
-    cameraPitch.current = clamp(
-      cameraPitch.current + controls.cameraY * 0.01,
-      -0.65,
-      0.65,
-    );
-
-    // Consume each drag movement once.
+    cameraPitch.current = clamp(cameraPitch.current + controls.cameraY * 0.01, -0.65, 0.65);
     controls.cameraX = 0;
     controls.cameraY = 0;
 
-    const moveX = paused
-      ? 0
-      : (controls.right ? 1 : 0) -
-        (controls.left ? 1 : 0) +
-        controls.stickX;
+    // Getting in / out of the car.
+    if (wasDriving.current !== driving) {
+      wasDriving.current = driving;
+      if (driving) {
+        carPose.current.speed = 0;
+        cameraYaw.current = carPose.current.yaw;
+      } else {
+        const c = carPose.current;
+        const rx = Math.cos(c.yaw), rz = -Math.sin(c.yaw);
+        const spots = [[-rx * 1.9, -rz * 1.9], [rx * 1.9, rz * 1.9], [Math.sin(c.yaw) * 3.4, Math.cos(c.yaw) * 3.4]];
+        const free = spots.find(([dx, dz]) => !blocked(c.x + dx, c.z + dz, 0.35)) ?? spots[0];
+        pose.current = { x: c.x + free[0], z: c.z + free[1], yaw: c.yaw };
+        c.speed = 0;
+      }
+    }
 
-    const moveY = paused
-      ? 0
-      : (controls.back ? 1 : 0) -
-        (controls.forward ? 1 : 0) +
-        controls.stickY;
-
-    const magnitude = Math.min(1, Math.hypot(moveX, moveY));
-    const speed = driving ? 7 : 3.2;
-
+    const moveX = paused ? 0 : (controls.right ? 1 : 0) - (controls.left ? 1 : 0) + controls.stickX;
+    const moveY = paused ? 0 : (controls.back ? 1 : 0) - (controls.forward ? 1 : 0) + controls.stickY;
     let moved = false;
 
-    if (magnitude > 0.05) {
-      const length = Math.hypot(moveX, moveY) || 1;
-      const localX = moveX / length;
-      const localZ = moveY / length;
-
-      const sin = Math.sin(cameraYaw.current);
-      const cos = Math.cos(cameraYaw.current);
-
-      const dx =
-        (localX * cos + localZ * sin) * speed * dt * magnitude;
-
-      const dz =
-        (-localX * sin + localZ * cos) * speed * dt * magnitude;
-
-      const candidateX = pose.current.x + dx;
-      const candidateZ = pose.current.z + dz;
-
-      const blockedX = collisions.some(
-        (box) =>
-          Math.abs(candidateX - box.x) < box.w / 2 + 0.34 &&
-          Math.abs(pose.current.z - box.z) < box.d / 2 + 0.34,
-      );
-
-      const blockedZ = collisions.some(
-        (box) =>
-          Math.abs(pose.current.x - box.x) < box.w / 2 + 0.34 &&
-          Math.abs(candidateZ - box.z) < box.d / 2 + 0.34,
-      );
-
-      if (!blockedX) pose.current.x = candidateX;
-      if (!blockedZ) pose.current.z = candidateZ;
-
-      moved = !blockedX || !blockedZ;
-
-      if (moved && !driving) {
-        yaw.current = Math.atan2(dx, dz) + Math.PI;
+    if (driving && street) {
+      const c = carPose.current;
+      const spec = DRIVABLE[carId];
+      const throttle = clamp(-moveY, -1, 1);
+      const steer = clamp(moveX, -1, 1);
+      if (throttle > 0.05) c.speed += (c.speed < 0 ? spec.accel * 2 : spec.accel) * throttle * dt;
+      else if (throttle < -0.05) c.speed += (c.speed > 0 ? -spec.accel * 2.2 : -spec.accel * 0.6) * -throttle * dt;
+      else c.speed -= Math.sign(c.speed) * Math.min(Math.abs(c.speed), 3.2 * dt);
+      c.speed = clamp(c.speed, -5, controls.sprint ? spec.top * 1.25 : spec.top);
+      c.yaw -= steer * 1.9 * dt * clamp(c.speed / 5, -1, 1);
+      const nx = c.x - Math.sin(c.yaw) * c.speed * dt;
+      const nz = c.z - Math.cos(c.yaw) * c.speed * dt;
+      const fx = nx - Math.sin(c.yaw) * Math.sign(c.speed || 1) * 1.6;
+      const fz = nz - Math.cos(c.yaw) * Math.sign(c.speed || 1) * 1.6;
+      if (blocked(nx, nz, 0.95) || blocked(fx, fz, 0.85)) {
+        c.speed *= -0.25;
+      } else {
+        c.x = nx;
+        c.z = nz;
       }
+      moved = Math.abs(c.speed) > 0.1;
+      pose.current = { x: c.x, z: c.z, yaw: c.yaw };
+      yaw.current = c.yaw;
+      if (state.clock.elapsedTime - lastManualLook.current > 1.2) {
+        let diff = c.yaw - cameraYaw.current;
+        diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+        cameraYaw.current += diff * Math.min(1, dt * 2.5);
+      }
+    } else {
+      const magnitude = Math.min(1, Math.hypot(moveX, moveY));
+      const running = controls.sprint && street;
+      const speed = running ? 6.2 : 3.3;
+      if (magnitude > 0.05) {
+        const length = Math.hypot(moveX, moveY) || 1;
+        const localX = moveX / length;
+        const localZ = moveY / length;
+        const sin = Math.sin(cameraYaw.current);
+        const cos = Math.cos(cameraYaw.current);
+        const dx = (localX * cos + localZ * sin) * speed * dt * magnitude;
+        const dz = (-localX * sin + localZ * cos) * speed * dt * magnitude;
+        const hit = (x: number, z: number) => street
+          ? blocked(x, z, 0.34)
+          : INTERIOR_COLLIDERS.some((b) => Math.abs(x - b.x) < b.w / 2 + 0.34 && Math.abs(z - b.z) < b.d / 2 + 0.34);
+        const bx = hit(pose.current.x + dx, pose.current.z);
+        if (!bx) pose.current.x += dx;
+        const bz = hit(pose.current.x, pose.current.z + dz);
+        if (!bz) pose.current.z += dz;
+        moved = !bx || !bz;
+        if (moved) yaw.current = Math.atan2(dx, dz) + Math.PI;
+      }
+      const nextGait = moved ? (running ? 'run' : 'walk') : 'idle';
+      setGait((g) => (g === nextGait ? g : nextGait));
     }
+    if (driving) setGait((g) => (g === 'idle' ? g : 'idle'));
 
-    setWalking((previous) => {
-      const next = moved && !driving;
-      return previous !== next ? next : previous;
-    });
-
+    // What's nearby?
     let found: WorldInteraction | null = null;
-
-    const near = (x: number, z: number, radius: number) =>
-      Math.hypot(pose.current.x - x, pose.current.z - z) < radius;
-
-    if (location === 'street') {
+    if (street) {
       if (driving) {
-        found = 'test-car';
-      } else if (near(-8, -6.45, 2.35)) {
-        found = 'apartment';
-      } else if (near(0, -6.45, 2.5)) {
-        found = 'furniture-shop';
-      } else if (near(8, -6.5, 1.8)) {
-        found = 'dealership';
-      } else if (near(10, -5.4, 1.9)) {
-        found = 'test-car';
+        found = Math.abs(carPose.current.speed) < 1.5 ? 'test-car' : null;
+      } else {
+        const c = carPose.current;
+        if (Math.hypot(pose.current.x - c.x, pose.current.z - c.z) < 3) found = 'test-car';
+        else {
+          let best = Infinity;
+          for (const p of POIS) {
+            const d = Math.hypot(pose.current.x - p.x, pose.current.z - p.z);
+            if (d < p.radius && d < best) { best = d; found = p.id; }
+          }
+        }
       }
-
-      if (driving && vehicle.current) {
-        vehicle.current.position.set(
-          pose.current.x,
-          0,
-          pose.current.z,
-        );
-        vehicle.current.rotation.y = yaw.current;
-      }
-    } else if (near(0, 4.1, 1.8)) {
+    } else if (Math.hypot(pose.current.x, pose.current.z - 4.1) < 1.8) {
       found = 'apartment-exit';
     }
-
     if (found !== lastNearbyNotify.current) {
       lastNearbyNotify.current = found;
       onNearbyChange(found);
     }
 
-    if (actor.current) {
-      actor.current.position.set(
-        pose.current.x,
-        0,
-        pose.current.z,
-      );
-      actor.current.rotation.y = yaw.current;
+    actor.current?.position.set(pose.current.x, street ? 0.15 : 0, pose.current.z);
+    if (actor.current) actor.current.rotation.y = yaw.current;
+    if (vehicle.current) {
+      vehicle.current.position.set(carPose.current.x, 0, carPose.current.z);
+      vehicle.current.rotation.y = carPose.current.yaw;
     }
 
-    if (!driving && vehicle.current) {
-      vehicle.current.position.set(10, 0, -5.4);
+    // Third-person camera that pulls in instead of clipping into buildings.
+    const wantDist = driving ? 10 : 6.5;
+    const sinY = Math.sin(cameraYaw.current), cosY = Math.cos(cameraYaw.current);
+    let dist = wantDist;
+    if (street) {
+      for (let d = 1.2; d <= wantDist; d += 0.5) {
+        if (blocked(pose.current.x + sinY * d, pose.current.z + cosY * d, 0.35, BUILDING_COLLIDERS)) { dist = Math.max(1.2, d - 0.6); break; }
+      }
+    } else {
+      dist = Math.min(dist, 5.2);
+    }
+    const follow = 1 - Math.exp(-6 * dt);
+    const camX = pose.current.x + sinY * dist;
+    const camZ = pose.current.z + cosY * dist;
+    const camY = (driving ? 4.2 : 3.4) + Math.sin(cameraPitch.current) * 2.5;
+    const targetY = (driving ? 1.4 : 1.6) - Math.sin(cameraPitch.current) * 3.5;
+    state.camera.position.x += (camX - state.camera.position.x) * follow;
+    state.camera.position.y += (camY - state.camera.position.y) * follow;
+    state.camera.position.z += (camZ - state.camera.position.z) * follow;
+    state.camera.lookAt(pose.current.x, targetY, pose.current.z);
+
+    // Sun + shadow frustum follow the player.
+    if (sun.current) {
+      sun.current.position.set(pose.current.x - 40, 80, pose.current.z + 30);
+      sun.current.target.position.set(pose.current.x, 0, pose.current.z);
+      sun.current.target.updateMatrixWorld();
     }
 
-    // Third-person camera. Horizontal dragging rotates around the player.
-    // Vertical dragging changes the viewing angle, with limits to prevent
-    // the camera from flipping upside down.
-    const lookDistance = 7;
-    const follow = 1 - Math.exp(-5 * dt);
-
-    const camX =
-      pose.current.x + Math.sin(cameraYaw.current) * lookDistance;
-
-    const camZ =
-      pose.current.z + Math.cos(cameraYaw.current) * lookDistance;
-
-    const camY = 4.4 + Math.sin(cameraPitch.current) * 2.5;
-
-    const targetY =
-      1.1 - Math.sin(cameraPitch.current) * 4;
-
-    state.camera.position.x +=
-      (camX - state.camera.position.x) * follow;
-
-    state.camera.position.y +=
-      (camY - state.camera.position.y) * follow;
-
-    state.camera.position.z +=
-      (camZ - state.camera.position.z) * follow;
-
-    state.camera.lookAt(
-      pose.current.x,
-      targetY,
-      pose.current.z,
-    );
-
-    if (state.clock.elapsedTime - lastPoseNotify.current > 0.65) {
+    if (state.clock.elapsedTime - lastPoseNotify.current > 0.5) {
       lastPoseNotify.current = state.clock.elapsedTime;
-
-      onPoseChange({
-        x: pose.current.x,
-        z: pose.current.z,
-        yaw: yaw.current,
-      });
-    }
-
-    if (wasDriving.current !== driving) {
-      wasDriving.current = driving;
+      onPoseChange({ x: pose.current.x, z: pose.current.z, yaw: yaw.current });
+      if (street && onPlaceChange) {
+        const place = describePlace(pose.current.x, pose.current.z);
+        const key = `${place.street}|${place.hood}`;
+        if (key !== lastPlace.current) { lastPlace.current = key; onPlaceChange(place); }
+      }
     }
   });
 
-  const testCarClick = () => {
-    if (!driving) onToggleDrive();
-  };
-
   return (
     <>
-      <color
-        attach="background"
-        args={[location === 'street' ? '#b8d1ce' : '#d8ccba']}
+      <color attach="background" args={[location === 'street' ? '#b9cdd8' : '#2a2420']} />
+      {location === 'street' && <fog attach="fog" args={['#c3d2da', 70, 300]} />}
+      <hemisphereLight args={['#dfeaf2', '#5b5148', location === 'street' ? 1.05 : 0.6]} />
+      <directionalLight
+        ref={sun}
+        position={[-40, 80, 30]}
+        intensity={location === 'street' ? 2.3 : 0.6}
+        color="#fff1dc"
+        castShadow
+        shadow-mapSize-width={2048}
+        shadow-mapSize-height={2048}
+        shadow-camera-left={-55}
+        shadow-camera-right={55}
+        shadow-camera-top={55}
+        shadow-camera-bottom={-55}
+        shadow-camera-near={10}
+        shadow-camera-far={220}
+        shadow-bias={-0.0005}
       />
 
-      <ambientLight intensity={1.15} />
-      <directionalLight position={[-5, 10, 6]} intensity={1.4} />
-
       {location === 'street' ? (
-        <City
-          onInteract={onInteract}
-          driving={driving}
-          onToggleDrive={testCarClick}
-        />
+        <>
+          <NycCity />
+          <Skyline />
+          <group onClick={() => { if (!driving) onToggleDrive(); }}>
+            <PlayerCar vehicleId={carId} groupRef={vehicle} />
+          </group>
+        </>
       ) : (
-        <ApartmentInterior
-          placements={placements}
-          pendingFurnitureId={pendingFurnitureId}
-          onPlaceFurniture={onPlaceFurniture}
-          onInspectFurniture={onInspectFurniture}
-        />
-      )}
-
-      {driving && location === 'street' && (
-        <Car
-          position={[pose.current.x, 0, pose.current.z]}
-          rotation={yaw.current}
-          groupRef={(group) => {
-            vehicle.current = group;
-          }}
-        />
+        <ApartmentInterior placements={placements} pendingFurnitureId={pendingFurnitureId} onPlaceFurniture={onPlaceFurniture} onInspectFurniture={onInspectFurniture} />
       )}
 
       <group ref={actor}>
-        <Avatar
-          character={character}
-          walking={walking}
-          driving={driving}
-        />
+        <Avatar character={character} walking={gait !== 'idle'} running={gait === 'run'} driving={driving} />
       </group>
     </>
   );

@@ -1,0 +1,7 @@
+[build]
+  publish = "artifacts/3d-game/dist/public"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

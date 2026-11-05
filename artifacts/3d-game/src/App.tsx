@@ -105,7 +105,7 @@ function Setup({ createPlayer, error }: { createPlayer: (username: string, chara
 }
 
 function GameScreen() {
-  const { game, createPlayer, move, work, bank, buyCar, buyFurniture, placeFurniture, buySupply, useSupply, rentApartment, rest, wash, updateWorldPose, setWorldLocation, saveError } = useGameState();
+  const { game, buyAndUse, rideSubway, createPlayer, move, work, bank, buyCar, buyFurniture, placeFurniture, buySupply, useSupply, rentApartment, rest, wash, updateWorldPose, setWorldLocation, saveError } = useGameState();
   const [tab, setTab] = useState<Tab>('Map');
   const [worldView, setWorldView] = useState<'world' | 'map'>('world');
   const [worldPanel, setWorldPanel] = useState<'furniture' | 'dealership' | null>(null);
@@ -171,7 +171,26 @@ function GameScreen() {
       setWorldPanel('dealership');
     } else if (target === 'test-car') {
       setDriving((current) => !current);
-      announce(driving ? 'You parked the test car.' : 'Test drive started. Use the controls to drive.');
+      announce(driving ? 'Parked. Mind the alternate-side rules.' : 'Engine on. W/S for gas and brake, A/D to steer.');
+    } else if (target === 'deli') {
+      announce(buyAndUse('deli-sandwich') ? 'Bacon, egg & cheese on a roll. Hunger restored.' : 'Not enough cash for a sandwich.');
+    } else if (target === 'pizza') {
+      announce(buyAndUse('pizza-slice') ? 'You folded a slice and ate it on the sidewalk.' : 'Not enough cash for a slice.');
+    } else if (target === 'laundromat') {
+      wash();
+      announce('Clothes washed, you cleaned up. Fresh start.');
+    } else if (target === 'subway') {
+      const dest = stops[Math.floor(Math.random() * stops.length)];
+      rideSubway(dest.position[0], dest.position[1], dest.name);
+      setSelectedStop(dest);
+      setMapFocus(dest.position);
+      setWorldView('map');
+      announce(`Swiped in at Astor Pl. You rode the train to ${dest.name}.`);
+    } else if (target.startsWith('job-')) {
+      const jobId = target.slice(4);
+      const job = jobs.find((item, i) => itemId(item, i) === jobId);
+      work(jobId);
+      if (job) announce(`Shift done at ${itemName(job)}. ${cash(itemPrice(job))} earned.`);
     }
   };
   const handleWorldLocation = (location: WorldLocation) => {
@@ -248,6 +267,7 @@ function GameScreen() {
             placements={game.placedFurniture}
             pendingFurnitureId={pendingFurnitureId}
             driving={driving}
+            vehicleId={['luxury-suv', 'electric-hatch', 'used-sedan'].find((id) => game.vehicles.includes(id)) ?? null}
             paused={Boolean(worldPanel)}
             onPoseChange={updateWorldPose}
             onLocationChange={handleWorldLocation}
@@ -259,7 +279,7 @@ function GameScreen() {
           <button className="world-map-shortcut" onClick={() => setWorldView('map')} data-testid="button-open-nyc-map"><MapIcon size={16} />NYC NAVIGATION MAP</button>
           {inspectedFurniture && <div className="world-inspection" role="status" data-testid="status-inspected-furniture"><button aria-label="Close furniture details" onClick={() => setInspectedFurniture(null)}><X size={14} /></button><strong>{itemName(furniture.find((item, index) => itemId(item, index) === inspectedFurniture) ?? { name: inspectedFurniture.replaceAll('-', ' ') })}</strong><span>{itemDescription(furniture.find((item, index) => itemId(item, index) === inspectedFurniture) ?? { description: 'A closer look at your apartment furniture.' })}</span></div>}
           {worldPanel === 'furniture' && <div className="world-panel-scrim"><section className="world-shop-panel" aria-label="Furniture shop" data-testid="panel-furniture-shop"><div className="row-between"><div><div className="eyebrow">YOUR NEXT PLACE</div><h2 className="display">FURNITURE SHOP</h2></div><button className="world-panel-close" aria-label="Close furniture shop" onClick={() => setWorldPanel(null)}><X size={18} /></button></div><p className="world-panel-copy">Pick a piece for your apartment. You can place it from Home after you bring it back.</p>{furniture.map((item, index) => { const id = itemId(item, index); const owned = game.furniture.includes(id); return <div className="world-shop-item" key={id}><div><strong>{itemName(item)}</strong><span>{itemDescription(item)}</span></div><button className="game-btn" disabled={owned || game.cash < itemPrice(item)} onClick={() => buyAtFurnitureShop(id, item)} data-testid={`shop-buy-furniture-${id}`}>{owned ? 'OWNED' : `BUY ${cash(itemPrice(item))}`}</button></div>; })}</section></div>}
-          {worldPanel === 'dealership' && <div className="world-panel-scrim"><section className="world-shop-panel" aria-label="Vehicle dealership" data-testid="panel-vehicle-dealership"><div className="row-between"><div><div className="eyebrow">MOTOR ROW · NEW YORK</div><h2 className="display">TAKE A TEST DRIVE</h2></div><button className="world-panel-close" aria-label="Close dealership" onClick={() => setWorldPanel(null)}><X size={18} /></button></div><p className="world-panel-copy">Take the red city car for a spin. Drive with WASD or the touch joystick; press E or Interact to park.</p><div className="action-card"><div className="row-between"><h3>CITY TEST CAR</h3><span className="price">NO CHARGE</span></div><p>A loaner for your first run around the block.</p><button className="game-btn" onClick={() => { setDriving(true); setWorldPanel(null); announce('Test drive started. Have a look around the neighborhood.'); }} data-testid="button-start-test-drive"><CarFront size={14} style={{ verticalAlign: 'middle', marginRight: 6 }} />Start test drive</button></div><button className="game-btn ghost dealership-cars-link" onClick={() => { setWorldPanel(null); setTab('Cars'); }}>View cars for sale</button></section></div>}
+          {worldPanel === 'dealership' && <div className="world-panel-scrim"><section className="world-shop-panel" aria-label="Vehicle dealership" data-testid="panel-vehicle-dealership"><div className="row-between"><div><div className="eyebrow">EAST SIDE MOTORS · E 6TH ST</div><h2 className="display">TAKE A TEST DRIVE</h2></div><button className="world-panel-close" aria-label="Close dealership" onClick={() => setWorldPanel(null)}><X size={18} /></button></div><p className="world-panel-copy">Take the red loaner for a spin around Alphabet City. W/S for gas and brake, A/D to steer, E to park. Cars you buy are parked outside your building on E 7th St.</p><div className="action-card"><div className="row-between"><h3>CITY TEST CAR</h3><span className="price">NO CHARGE</span></div><p>A loaner for your first run around the block.</p><button className="game-btn" onClick={() => { setDriving(true); setWorldPanel(null); announce('Test drive started. Have a look around the neighborhood.'); }} data-testid="button-start-test-drive"><CarFront size={14} style={{ verticalAlign: 'middle', marginRight: 6 }} />Start test drive</button></div><button className="game-btn ghost dealership-cars-link" onClick={() => { setWorldPanel(null); setTab('Cars'); }}>View cars for sale</button></section></div>}
         </div> : <>
           <MapContainer center={playerPos} zoom={12} minZoom={10} maxZoom={18} scrollWheelZoom zoomControl={false} attributionControl>
             <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />
@@ -331,7 +351,9 @@ function AdminGate() {
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
 const clerkPubKey = publishableKeyFromHost(window.location.hostname, import.meta.env.VITE_CLERK_PUBLISHABLE_KEY);
 const clerkProxyUrl = import.meta.env.VITE_CLERK_PROXY_URL;
-if (!clerkPubKey) throw new Error('Missing VITE_CLERK_PUBLISHABLE_KEY in app environment.');
+// The game itself never needs Clerk; only the billboard manager does. Without a key
+// the game still runs and the admin routes explain that staff sign-in is unavailable.
+if (!clerkPubKey) console.warn('VITE_CLERK_PUBLISHABLE_KEY is not set: the billboard manager is disabled.');
 
 function stripBase(path: string): string {
   return basePath && path.startsWith(basePath) ? path.slice(basePath.length) || '/' : path;
@@ -372,8 +394,23 @@ const clerkAppearance = {
   },
 };
 
+function AdminUnavailable() {
+  return <main className="auth-shell"><div className="admin-card" style={{ maxWidth: 430, color: '#182330' }}><div className="eyebrow">STAFF ONLY · CITY MEDIA</div><h1 className="display" style={{ fontSize: 32 }}>AD MANAGER OFFLINE</h1><p style={{ fontSize: 13 }}>Staff sign-in isn't configured for this deployment yet, so billboards can't be edited here. The game itself works as normal.</p><Link to="/" className="game-btn" style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>Back to the city</Link></div></main>;
+}
+
+const notFound = <main className="auth-shell"><div className="admin-card"><div className="eyebrow">WRONG TURN</div><h1 className="display">THAT BLOCK ISN'T ON THE MAP.</h1><a href={basePath || '/'} className="game-btn" style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>Back to the city</a></div></main>;
+
 function AppRoutes() {
   const [, setLocation] = useLocation();
+  if (!clerkPubKey) {
+    return <Switch>
+      <Route path="/" component={GameScreen} />
+      <Route path="/admin" component={AdminUnavailable} />
+      <Route path="/sign-in/*?" component={AdminUnavailable} />
+      <Route path="/sign-up/*?" component={AdminUnavailable} />
+      <Route>{notFound}</Route>
+    </Switch>;
+  }
   return <ClerkProvider
     publishableKey={clerkPubKey}
     proxyUrl={clerkProxyUrl}
@@ -388,7 +425,7 @@ function AppRoutes() {
       <Route path="/admin" component={AdminGate} />
       <Route path="/sign-in/*?" component={() => <AuthPage mode="in" />} />
       <Route path="/sign-up/*?" component={() => <AuthPage mode="up" />} />
-      <Route><main className="auth-shell"><div className="admin-card"><div className="eyebrow">WRONG TURN</div><h1 className="display">THAT BLOCK ISN'T ON THE MAP.</h1><a href="/" className="game-btn" style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>Back to the city</a></div></main></Route>
+      <Route>{notFound}</Route>
     </Switch>
   </ClerkProvider>;
 }
